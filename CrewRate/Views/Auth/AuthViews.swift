@@ -9,9 +9,11 @@ struct AuthView: View {
         NavigationStack {
             VStack(spacing: 24) {
                 Spacer()
-                Image(systemName: "hammer.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(Color.crewOrange)
+                Image("BrandLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 VStack(spacing: 8) {
                     Text("Construction Gossip")
                         .font(.largeTitle.bold())
@@ -74,38 +76,45 @@ struct SignUpView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var validationMessage: String?
+    @State private var acceptedTerms = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            TextInputField(title: "Username", text: $username)
-                .keyboardType(.asciiCapable)
-                .textContentType(.username)
-            TextInputField(title: "Email", text: $email)
-                .keyboardType(.emailAddress)
-                .textContentType(.emailAddress)
-            SecureField("Password", text: $password)
-                .textContentType(.newPassword)
-                .padding(12)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            if let validationMessage {
-                ErrorView(message: validationMessage)
+        if acceptedTerms {
+            VStack(spacing: 12) {
+                TextInputField(title: "Username", text: $username)
+                    .keyboardType(.asciiCapable)
+                    .textContentType(.username)
+                TextInputField(title: "Email", text: $email)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                SecureField("Password", text: $password)
+                    .textContentType(.newPassword)
+                    .padding(12)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                if let validationMessage {
+                    ErrorView(message: validationMessage)
+                }
+                if let error = session.errorMessage {
+                    ErrorView(message: error)
+                }
+                PrimaryButton("Create Account", systemImage: "person.badge.plus") {
+                    signUp()
+                }
+                .disabled(!isValid)
+                .opacity(isValid ? 1 : 0.55)
             }
-            if let error = session.errorMessage {
-                ErrorView(message: error)
+        } else {
+            TermsAgreementView {
+                acceptedTerms = true
             }
-            PrimaryButton("Create Account", systemImage: "person.badge.plus") {
-                signUp()
-            }
-            .disabled(!isValid)
-            .opacity(isValid ? 1 : 0.55)
         }
     }
 
     private var isValid: Bool {
         !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         && !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        && !password.isEmpty
+        && password.count >= 8
     }
 
     private func signUp() {
@@ -119,8 +128,8 @@ struct SignUpView: View {
             validationMessage = "Email is required."
             return
         }
-        guard !password.isEmpty else {
-            validationMessage = "Password is required."
+        guard password.count >= 8 else {
+            validationMessage = "Password must be at least 8 characters."
             return
         }
         validationMessage = nil
@@ -150,7 +159,7 @@ struct OnboardingProfileView: View {
                     TextField("First name", text: optionalBinding(\.firstName))
                     TextField("Last name", text: optionalBinding(\.lastName))
                     StateCityPicker(state: $profile.state, city: $profile.city)
-                    Picker("Trade", selection: Binding($profile.tradePosition, replacingNilWith: .other)) {
+                    Picker("Job / Position", selection: Binding($profile.tradePosition, replacingNilWith: .other)) {
                         ForEach(TradePosition.allCases) { trade in
                             Text(trade.rawValue).tag(trade)
                         }

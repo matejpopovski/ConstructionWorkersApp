@@ -16,7 +16,14 @@ struct HomeFeedView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Construction Gossip")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    NavigationLink {
+                        NotificationsView()
+                    } label: {
+                        Image(systemName: "hammer.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(Color.crewOrange, Color.crewNavy)
+                    }
                     NavigationLink {
                         SettingsPrivacyView()
                     } label: {
@@ -51,20 +58,13 @@ struct PostCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                ProfileImageView(profile: authorProfile, anonymous: post.isAnonymous)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(post.isAnonymous ? "Anonymous Worker" : post.authorUsername)
-                        .font(.headline)
-                    Text(DateDisplay.label(for: post.createdAt))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                authorHeader
                 Spacer()
                 Menu {
                     Button("Report", systemImage: "flag") { showingReport = true }
                     if post.userID == session.currentProfile?.id {
                         Button("Delete", systemImage: "trash", role: .destructive) {
-                            session.postService.delete(post, currentUserID: post.userID)
+                            session.postService.delete(post, currentUserID: session.currentProfile?.id ?? post.userID)
                         }
                     }
                 } label: {
@@ -130,11 +130,26 @@ struct PostCardView: View {
                             sentToFriendName = friend.username
                             showingFriendShare = false
                         } label: {
-                            Label(friend.username, systemImage: "person.crop.circle")
+                            HStack(spacing: 12) {
+                                ProfileImageView(profile: friend)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(friend.username)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                    Text("Send this report")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "paperplane.fill")
+                                    .foregroundStyle(Color.crewNavy)
+                            }
+                            .padding(.vertical, 4)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
-                .navigationTitle("Send to Friend")
+                .navigationTitle("Send Post")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Done") { showingFriendShare = false }
@@ -167,12 +182,67 @@ struct PostCardView: View {
         }
     }
 
+    @ViewBuilder
+    private var authorHeader: some View {
+        if !post.isAnonymous, let authorProfile {
+            NavigationLink {
+                PublicProfileView(profile: authorProfile)
+            } label: {
+                headerContent
+            }
+            .buttonStyle(.plain)
+        } else {
+            headerContent
+        }
+    }
+
+    private var headerContent: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ProfileImageView(profile: authorProfile, anonymous: post.isAnonymous)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(post.isAnonymous ? "Anonymous Worker" : post.authorUsername)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text(DateDisplay.label(for: post.createdAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var badges: some View {
         FlowLayout {
-            if let company = post.companyOrEmployer { BadgeView(text: company, systemImage: "building.2") }
-            if let trade = post.tradeLabel { BadgeView(text: trade, systemImage: "hammer") }
-            if let city = post.city, let state = post.state { BadgeView(text: "\(city), \(state)", systemImage: "mappin") }
+            if let company = post.companyOrEmployer {
+                NavigationLink {
+                    CompanyWorkersView(company: company)
+                } label: {
+                    BadgeView(text: company, systemImage: "building.2")
+                }
+                .buttonStyle(.plain)
+            }
+            if let trade = post.tradeLabel {
+                NavigationLink {
+                    PostAttributeResultsView(title: trade, filter: .job(trade))
+                } label: {
+                    BadgeView(text: trade, systemImage: "hammer")
+                }
+                .buttonStyle(.plain)
+            }
+            if let city = post.city, let state = post.state {
+                NavigationLink {
+                    PostAttributeResultsView(title: "\(city), \(state)", filter: .location(city: city, state: state))
+                } label: {
+                    BadgeView(text: "\(city), \(state)", systemImage: "mappin")
+                }
+                .buttonStyle(.plain)
+            }
             if let pay = post.payAmount, let type = post.payType { BadgeView(text: "$\(pay)/\(type.rawValue)", systemImage: "dollarsign.circle") }
+            if let averageRating {
+                BadgeView(text: "\(averageRating)/5 avg", systemImage: "star.fill")
+            }
+            if let wouldRecommend = post.wouldRecommend {
+                BadgeView(text: wouldRecommend ? "Recommended" : "Not recommended", systemImage: wouldRecommend ? "hand.thumbsup" : "hand.thumbsdown")
+            }
         }
     }
 
@@ -183,7 +253,20 @@ struct PostCardView: View {
     private var shareText: String {
         let company = post.companyOrEmployer ?? "a construction job"
         let text = post.textContent ?? "Check out this construction review."
-        return "\(post.authorUsername) on Construction Gossip about \(company): \(text)"
+        let author = post.isAnonymous ? "Anonymous Worker" : post.authorUsername
+        return "\(author) on Construction Gossip about \(company): \(text)"
+    }
+
+    private var averageRating: Int? {
+        let ratings = [
+            post.supervisorFlexibilityRating,
+            post.treatmentRating,
+            post.safetyRating,
+            post.workloadRating,
+            post.payFairnessRating
+        ].compactMap { $0 }
+        guard !ratings.isEmpty else { return nil }
+        return Int((Double(ratings.reduce(0, +)) / Double(ratings.count)).rounded())
     }
 }
 
@@ -194,5 +277,42 @@ struct FlowLayout<Content: View>: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
             content
         }
+    }
+}
+
+enum PostAttributeFilter {
+    case job(String)
+    case location(city: String, state: String)
+}
+
+struct PostAttributeResultsView: View {
+    @EnvironmentObject private var session: SessionViewModel
+    let title: String
+    let filter: PostAttributeFilter
+
+    private var posts: [Post] {
+        session.postService.posts.filter { post in
+            switch filter {
+            case .job(let job):
+                return post.tradeLabel?.caseInsensitiveCompare(job) == .orderedSame
+            case .location(let city, let state):
+                return post.city?.caseInsensitiveCompare(city) == .orderedSame
+                    && post.state?.caseInsensitiveCompare(state) == .orderedSame
+            }
+        }
+    }
+
+    var body: some View {
+        List {
+            if posts.isEmpty {
+                EmptyStateView(title: "No matching reports", systemImage: "doc.text.magnifyingglass")
+            } else {
+                ForEach(posts) { post in
+                    PostCardView(post: post)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                }
+            }
+        }
+        .navigationTitle(title)
     }
 }

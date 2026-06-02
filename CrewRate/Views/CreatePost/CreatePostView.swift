@@ -61,9 +61,9 @@ struct CreatePostView: View {
                     }
                     Toggle("Post anonymously", isOn: $isAnonymous)
                 }
-                Section("Company or Job") {
+                Section("Company and Job") {
                     TextField("Company or employer", text: $company)
-                    Picker("Trade", selection: $trade) {
+                    Picker("Job / Position", selection: $trade) {
                         ForEach(TradePosition.allCases) { trade in
                             Text(trade.rawValue).tag(trade)
                         }
@@ -80,10 +80,10 @@ struct CreatePostView: View {
                             Text(type.rawValue.capitalized).tag(type)
                         }
                     }
-                    TextField("Pay amount", text: $payAmount)
+                    TextField("Pay amount before deductions", text: $payAmount)
                         .keyboardType(.decimalPad)
                     Toggle("Overtime available", isOn: $overtimeAvailable)
-                    TextField("Benefits received", text: $benefits)
+                    TextField("Benefits received, per diem, travel pay", text: $benefits)
                 }
                 Section("Ratings") {
                     RatingPicker(title: "Safety", value: $safetyRating)
@@ -127,16 +127,31 @@ struct CreatePostView: View {
         guard let profile = session.currentProfile ?? session.profileService.profiles.first else { return }
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedCompany = company.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty || !trimmedCompany.isEmpty || selectedPhotoData != nil else {
-            validationMessage = "Add a review, company, or photo before posting."
+        let trimmedCustomTrade = customTrade.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCompany.isEmpty else {
+            validationMessage = "Company or employer is required."
+            return
+        }
+        guard !trimmedText.isEmpty else {
+            validationMessage = "Add details about what happened on the job."
+            return
+        }
+        guard state != nil, city?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            validationMessage = "Choose a state and enter the job city."
+            return
+        }
+        guard trade != .other || !trimmedCustomTrade.isEmpty else {
+            validationMessage = "Write the custom job or position."
+            return
+        }
+        guard let amount = Decimal(string: payAmount), amount > 0 else {
+            validationMessage = "Enter a valid pay amount."
             return
         }
         validationMessage = nil
-        let amount = Decimal(string: payAmount)
         let attachedImages = selectedPhotoData.map { [$0] } ?? []
-        let trimmedCustomTrade = customTrade.trimmingCharacters(in: .whitespacesAndNewlines)
         let tradeLabel = trade == .other && !trimmedCustomTrade.isEmpty ? trimmedCustomTrade : trade.rawValue
-        let post = Post(id: UUID(), userID: profile.id, authorUsername: profile.username, postType: .workReport, textContent: trimmedText.isEmpty ? nil : trimmedText, imageURLs: [], imageData: attachedImages, isAnonymous: isAnonymous, companyOrEmployer: trimmedCompany.isEmpty ? nil : trimmedCompany, tradePosition: trade, customTradePosition: trade == .other ? trimmedCustomTrade : nil, city: city, state: state, payType: amount == nil ? nil : payType, payAmount: amount, overtimeAvailable: overtimeAvailable, benefits: benefits.csvValues, supervisorFlexibilityRating: supervisorRating, treatmentRating: treatmentRating, safetyRating: safetyRating, workloadRating: workloadRating, payFairnessRating: payFairnessRating, wouldRecommend: wouldRecommend, tags: [tradeLabel, city, state, trimmedCompany].compactMap { $0 }.filter { !$0.isEmpty }, likeCount: 0, commentCount: 0, createdAt: .now, updatedAt: .now)
+        let post = Post(id: UUID(), userID: profile.id, authorUsername: profile.username, postType: .workReport, textContent: trimmedText, imageURLs: [], imageData: attachedImages, isAnonymous: isAnonymous, companyOrEmployer: trimmedCompany, tradePosition: trade, customTradePosition: trade == .other ? trimmedCustomTrade : nil, city: city, state: state, payType: payType, payAmount: amount, overtimeAvailable: overtimeAvailable, benefits: benefits.csvValues, supervisorFlexibilityRating: supervisorRating, treatmentRating: treatmentRating, safetyRating: safetyRating, workloadRating: workloadRating, payFairnessRating: payFairnessRating, wouldRecommend: wouldRecommend, tags: [tradeLabel, city, state, trimmedCompany, overtimeAvailable ? "Overtime" : nil, wouldRecommend ? "Recommended" : "Not recommended"].compactMap { $0 }.filter { !$0.isEmpty }, likeCount: 0, commentCount: 0, createdAt: .now, updatedAt: .now)
         session.postService.create(post)
         text = ""
         company = ""

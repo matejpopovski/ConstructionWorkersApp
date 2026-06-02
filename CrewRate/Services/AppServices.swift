@@ -5,6 +5,7 @@ enum AppError: LocalizedError {
     case duplicateUsername
     case duplicateEmail
     case invalidCredentials
+    case weakPassword
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ enum AppError: LocalizedError {
             "That email already has an account."
         case .invalidCredentials:
             "Email or password is incorrect."
+        case .weakPassword:
+            "Password must be at least 8 characters."
         }
     }
 }
@@ -131,10 +134,15 @@ final class AuthService: ObservableObject {
     func signUp(username: String, email: String, password: String) async throws -> Profile {
         let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !accounts.contains(where: { $0.username.lowercased() == normalizedUsername.lowercased() }) else {
+        guard password.count >= 8 else {
+            throw AppError.weakPassword
+        }
+        guard !accounts.contains(where: { $0.username.lowercased() == normalizedUsername.lowercased() })
+                && !DemoData.profiles.contains(where: { $0.username.lowercased() == normalizedUsername.lowercased() }) else {
             throw AppError.duplicateUsername
         }
-        guard !accounts.contains(where: { $0.email.lowercased() == normalizedEmail }) else {
+        guard !accounts.contains(where: { $0.email.lowercased() == normalizedEmail })
+                && !DemoData.profiles.contains(where: { $0.email?.lowercased() == normalizedEmail }) else {
             throw AppError.duplicateEmail
         }
         let profile = Profile(id: UUID(), username: normalizedUsername, email: normalizedEmail, firstName: nil, lastName: nil, profilePhotoURL: nil, state: nil, city: nil, streetAddressPrivateOnly: nil, tradePosition: nil, experienceLevel: nil, currentCompanyOrEmployer: nil, payType: nil, payAmount: nil, unionStatus: nil, yearsExperience: nil, certifications: [], benefitsReceived: [], languagesSpoken: [], bio: nil, openToWork: false, willingToRelocate: false, showRealName: false, showCurrentCompany: false, showPayOnProfile: false, showCityState: false, allowFriendRequests: true, allowMessagesFrom: .friends)
@@ -174,11 +182,13 @@ final class ProfileService: ObservableObject {
 
     init() {
         let accountProfiles = LocalStore.loadAccounts().map(\.profile)
-        profiles = (DemoData.profiles + accountProfiles).uniquedByID()
+        profiles = (accountProfiles + DemoData.profiles).uniquedByIdentity()
     }
 
     func update(_ profile: Profile) {
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+            profiles[index] = profile
+        } else if let index = profiles.firstIndex(where: { $0.username.lowercased() == profile.username.lowercased() }) {
             profiles[index] = profile
         } else {
             profiles.append(profile)
@@ -268,7 +278,7 @@ final class FriendService: ObservableObject {
     }
 
     func sendRequest(to profile: Profile, from currentProfile: Profile?) {
-        guard !isFriend(profile), !hasPendingRequest(to: profile), let currentProfile else { return }
+        guard !isFriend(profile), !hasPendingRequest(to: profile), let currentProfile, profile.id != currentProfile.id else { return }
         pendingRequests.append(FriendRequest(id: UUID(), senderID: currentProfile.id, receiverID: profile.id, senderUsername: currentProfile.username, status: .pending, createdAt: .now))
     }
 
@@ -291,8 +301,9 @@ final class FriendService: ObservableObject {
 final class SearchService {
     func search(query: String, profiles: [Profile], posts: [Post]) -> (people: [Profile], posts: [Post], companies: [String]) {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !term.isEmpty else { return (profiles, posts, companies(from: posts)) }
-        let people = profiles.filter { profile in
+        let uniqueProfiles = profiles.uniquedByIdentity()
+        guard !term.isEmpty else { return (uniqueProfiles, posts, companies(from: posts)) }
+        let people = uniqueProfiles.filter { profile in
             [profile.username, profile.city, profile.state, profile.tradeLabel, profile.currentCompanyOrEmployer].compactMap { $0?.lowercased() }.contains { $0.contains(term) }
         }
         let matchingPosts = posts.filter { post in
@@ -303,6 +314,10 @@ final class SearchService {
 
     private func companies(from posts: [Post]) -> [String] {
         Array(Set(posts.compactMap(\.companyOrEmployer))).sorted()
+    }
+
+    func posts(for company: String, posts: [Post]) -> [Post] {
+        posts.filter { $0.companyOrEmployer?.caseInsensitiveCompare(company) == .orderedSame }
     }
 }
 
@@ -389,8 +404,19 @@ final class ModerationService {
 }
 
 private extension Array where Element == Profile {
-    func uniquedByID() -> [Profile] {
+    func uniquedByIdentity() -> [Profile] {
         var seen = Set<UUID>()
-        return filter { seen.insert($0.id).inserted }
+        var usernames = Set<String>()
+        var emails = Set<String>()
+        return filter { profile in
+            let username = profile.username.lowercased()
+            let email = profile.email?.lowercased()
+            guard seen.insert(profile.id).inserted else { return false }
+            guard usernames.insert(username).inserted else { return false }
+            if let email {
+                guard emails.insert(email).inserted else { return false }
+            }
+            return true
+        }
     }
 }

@@ -10,6 +10,10 @@ struct PublicProfileView: View {
         profile ?? session.currentProfile ?? DemoData.currentUser
     }
 
+    private var isCurrentUser: Bool {
+        shownProfile.id == session.currentProfile?.id
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -18,12 +22,16 @@ struct PublicProfileView: View {
                     if let bio = shownProfile.bio, !bio.isEmpty {
                         Text(bio)
                     }
+                    socialStats
                     details
                     actionButtons
                     Divider()
                     Text("Posts")
                         .font(.headline)
-                    ForEach(session.postService.posts.filter { $0.userID == shownProfile.id }) { post in
+                    if visibleProfilePosts.isEmpty {
+                        EmptyStateView(title: "No public posts yet", systemImage: "doc.text")
+                    }
+                    ForEach(visibleProfilePosts) { post in
                         PostCardView(post: post)
                     }
                 }
@@ -56,6 +64,28 @@ struct PublicProfileView: View {
         }
     }
 
+    private var socialStats: some View {
+        HStack(spacing: 20) {
+            statBlock(count: followerCount, label: "Followers")
+            statBlock(count: followingCount, label: "Following")
+            if isCurrentUser {
+                statBlock(count: privatePostCount, label: "Private")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func statBlock(count: Int, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(count)")
+                .font(.headline)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(minWidth: 70, alignment: .leading)
+    }
+
     private var details: some View {
         FlowLayout {
             if shownProfile.showCityState, let city = shownProfile.city, let state = shownProfile.state {
@@ -76,8 +106,12 @@ struct PublicProfileView: View {
     private var actionButtons: some View {
         HStack {
             if profile != nil {
-                if session.friendService.isFriend(shownProfile) {
-                    Label("Friends", systemImage: "checkmark.circle.fill")
+                if isCurrentUser {
+                    Label("This is you", systemImage: "person.crop.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                } else if session.friendService.isFriend(shownProfile) {
+                    Label("Following", systemImage: "checkmark.circle.fill")
                         .font(.headline)
                         .foregroundStyle(.green)
                 } else if session.friendService.hasPendingRequest(to: shownProfile) {
@@ -88,7 +122,7 @@ struct PublicProfileView: View {
                     Button {
                         session.friendService.sendRequest(to: shownProfile, from: session.currentProfile)
                     } label: {
-                        Label("Add Friend", systemImage: "person.badge.plus")
+                        Label("Follow", systemImage: "person.badge.plus")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -100,6 +134,26 @@ struct PublicProfileView: View {
                 .buttonStyle(.bordered)
             }
         }
+    }
+
+    private var visibleProfilePosts: [Post] {
+        session.postService.posts.filter { post in
+            post.userID == shownProfile.id && (!post.isAnonymous || isCurrentUser)
+        }
+    }
+
+    private var privatePostCount: Int {
+        session.postService.posts.filter { $0.userID == shownProfile.id && $0.isAnonymous }.count
+    }
+
+    private var followerCount: Int {
+        if isCurrentUser { return session.friendService.friends.count }
+        return session.friendService.isFriend(shownProfile) ? 1 : 0
+    }
+
+    private var followingCount: Int {
+        if isCurrentUser { return session.friendService.friends.count }
+        return session.friendService.isFriend(shownProfile) ? 1 : 0
     }
 }
 
@@ -125,7 +179,7 @@ struct EditProfileView: View {
                 TextField("First name", text: optionalBinding(\.firstName))
                 TextField("Last name", text: optionalBinding(\.lastName))
                 StateCityPicker(state: $profile.state, city: $profile.city)
-                Picker("Trade", selection: Binding($profile.tradePosition, replacingNilWith: .other)) {
+                Picker("Job / Position", selection: Binding($profile.tradePosition, replacingNilWith: .other)) {
                     ForEach(TradePosition.allCases) { trade in
                         Text(trade.rawValue).tag(trade)
                     }

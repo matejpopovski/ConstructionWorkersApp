@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "ConstructionGossipLogo.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

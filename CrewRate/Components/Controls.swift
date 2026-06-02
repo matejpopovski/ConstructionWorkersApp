@@ -78,6 +78,13 @@ struct ProfileImageView: View {
 struct StateCityPicker: View {
     @Binding var state: String?
     @Binding var city: String?
+    @State private var cityText: String
+
+    init(state: Binding<String?>, city: Binding<String?>) {
+        _state = state
+        _city = city
+        _cityText = State(initialValue: city.wrappedValue ?? "")
+    }
 
     var body: some View {
         Picker("State", selection: stateSelection) {
@@ -87,35 +94,46 @@ struct StateCityPicker: View {
             }
         }
         .onChange(of: state) { _, newState in
-            guard let newState else {
+            guard newState != nil else {
                 city = nil
+                cityText = ""
                 return
             }
-            if !LocationData.cities(for: newState).contains(city ?? "") {
-                city = nil
-            }
+            city = nil
+            cityText = ""
         }
 
-        Picker("City", selection: citySelection) {
-            Text("Choose city").tag("")
-            ForEach(LocationData.cities(for: state), id: \.self) { city in
-                Text(city).tag(city)
+        TextField("City", text: $cityText)
+            .textInputAutocapitalization(.words)
+            .autocorrectionDisabled()
+            .disabled(state == nil || state == "")
+            .onAppear { cityText = city ?? "" }
+            .onChange(of: cityText) { _, newValue in
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                city = trimmed.isEmpty ? nil : trimmed
+            }
+
+        let suggestions = LocationData.suggestedCities(for: state, matching: cityText)
+        if !suggestions.isEmpty && suggestions.first?.caseInsensitiveCompare(cityText) != .orderedSame {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    ForEach(suggestions, id: \.self) { suggestion in
+                        Button(suggestion) {
+                            cityText = suggestion
+                            city = suggestion
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(.vertical, 2)
             }
         }
-        .disabled(state == nil || state == "")
     }
 
     private var stateSelection: Binding<String> {
         Binding(
             get: { state ?? "" },
             set: { state = $0.isEmpty ? nil : $0 }
-        )
-    }
-
-    private var citySelection: Binding<String> {
-        Binding(
-            get: { city ?? "" },
-            set: { city = $0.isEmpty ? nil : $0 }
         )
     }
 }

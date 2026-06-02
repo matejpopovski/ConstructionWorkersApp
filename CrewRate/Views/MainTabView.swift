@@ -5,12 +5,12 @@ struct MainTabView: View {
         TabView {
             HomeFeedView()
                 .tabItem { Label("Home", systemImage: "house.fill") }
-            SearchView()
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+            MessagesView()
+                .tabItem { Label("Chat", systemImage: "message.fill") }
             CreatePostView()
                 .tabItem { Label("Post", systemImage: "plus.circle.fill") }
-            FriendsView()
-                .tabItem { Label("Friends", systemImage: "person.2.fill") }
+            SearchView()
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }
             PublicProfileView(profile: nil)
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
         }
