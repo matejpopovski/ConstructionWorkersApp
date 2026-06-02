@@ -1,5 +1,13 @@
 # ConstructionWorkersApp
 
+## Confidentiality and Proprietary Rights
+
+This repository, source code, product concept, designs, workflows, data models, business logic, branding, and related materials are confidential, proprietary, and intended solely for authorized development of Construction Gossip. This project is not open source. No license is granted, implied, or otherwise, to copy, distribute, publish, reuse, modify, reverse engineer, commercialize, or incorporate any portion of this codebase or product concept into another project without prior written permission from the owner.
+
+All rights are reserved. The owner may pursue copyright, trade secret, trademark, contract, patent, patent-pending, and any other applicable intellectual-property protections to the fullest extent permitted by law. Any person or entity that takes, copies, republishes, sells, derives value from, or otherwise uses any part of this repository, whether in full or in part, may be subject to legal action, damages, injunctive relief, and review by a court of competent jurisdiction.
+
+Access to this repository does not constitute permission to use it. If you are not expressly authorized to view or work on this project, you must stop using it, delete any copies in your possession, and notify the owner immediately.
+
 Construction Gossip is an MVP native iPhone app for U.S. construction workers to connect, post, compare workplace/pay experiences, search workers and companies, and manage friends.
 
 ## What is Included
