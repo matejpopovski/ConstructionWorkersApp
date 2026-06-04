@@ -64,6 +64,20 @@ struct ProfileImageView: View {
                     .resizable()
                     .scaledToFill()
                     .clipShape(Circle())
+            } else if !anonymous, let url = profile?.profilePhotoURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: size * 0.5))
+                            .foregroundStyle(Color.crewOrange)
+                    }
+                }
+                .clipShape(Circle())
             } else {
                 Image(systemName: anonymous ? "person.fill.questionmark" : "person.crop.circle.fill")
                     .font(.system(size: size * 0.5))

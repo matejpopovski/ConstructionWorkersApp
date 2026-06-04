@@ -204,11 +204,12 @@ struct OnboardingProfileView: View {
         photoErrorMessage = nil
         guard let item else { return }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self), UIImage(data: data) != nil else {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let optimizedData = ImageOptimizer.optimizedJPEGData(from: data, preset: .profile) else {
                 photoErrorMessage = "That photo could not be loaded."
                 return
             }
-            profile.profilePhotoData = data
+            profile.profilePhotoData = optimizedData
         } catch {
             photoErrorMessage = "Profile photo attach failed. Please try another image."
         }

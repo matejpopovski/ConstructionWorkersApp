@@ -18,7 +18,7 @@ struct CommentsView: View {
                     .listRowBackground(Color.clear)
             }
             Section("Comments") {
-                let comments = session.commentService.comments(for: post)
+                let comments = session.commentService.comments(for: post).filter { !session.moderationService.isBlocked($0.userID) }
                 if comments.isEmpty {
                     EmptyStateView(title: "No comments yet", systemImage: "bubble.left")
                 } else {
@@ -41,9 +41,16 @@ struct CommentsView: View {
                     ErrorView(message: photoErrorMessage)
                 }
                 Button("Comment") { addComment(parent: nil) }
+                    .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedPhotoData == nil)
             }
         }
         .navigationTitle("Discussion")
+        .refreshable {
+            session.refreshRemoteData()
+        }
+        .onAppear {
+            session.refreshRemoteData()
+        }
         .onChange(of: selectedPhoto) { _, newItem in
             Task { await loadSelectedPhoto(newItem) }
         }
@@ -51,8 +58,10 @@ struct CommentsView: View {
 
     private func addComment(parent: Comment?) {
         guard let profile = session.currentProfile ?? session.profileService.profiles.first else { return }
+        let trimmed = commentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || selectedPhotoData != nil else { return }
         let imageData = selectedPhotoData.map { [$0] } ?? []
-        let comment = Comment(id: UUID(), postID: post.id, userID: profile.id, parentCommentID: parent?.id, authorUsername: profile.username, textContent: commentText.isEmpty ? nil : commentText, imageURLs: [], imageData: imageData, likeCount: 0, createdAt: .now, updatedAt: .now)
+        let comment = Comment(id: UUID(), postID: post.id, userID: profile.id, parentCommentID: parent?.id, authorUsername: profile.username, textContent: trimmed.isEmpty ? nil : trimmed, imageURLs: [], imageData: imageData, likeCount: 0, createdAt: .now, updatedAt: .now)
         session.commentService.add(comment)
         commentText = ""
         selectedPhoto = nil
@@ -64,11 +73,12 @@ struct CommentsView: View {
         selectedPhotoData = nil
         guard let item else { return }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self), UIImage(data: data) != nil else {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let optimizedData = ImageOptimizer.optimizedJPEGData(from: data, preset: .message) else {
                 photoErrorMessage = "That photo could not be loaded."
                 return
             }
-            selectedPhotoData = data
+            selectedPhotoData = optimizedData
         } catch {
             photoErrorMessage = "Photo attach failed. Please try another image."
         }
@@ -107,6 +117,25 @@ struct CommentRowView: View {
                     .scaledToFill()
                     .frame(height: 140)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else if let imageURL = comment.imageURLs.first {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        Label("Photo unavailable", systemImage: "photo")
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                            .background(Color.crewGray)
+                    default:
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                            .background(Color.crewGray)
+                    }
+                }
+                .frame(height: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             HStack {
                 Button {
@@ -128,19 +157,23 @@ struct CommentRowView: View {
                     Button("Send") { addReply() }
                 }
             }
-            ForEach(session.commentService.replies(to: comment)) { reply in
+            ForEach(session.commentService.replies(to: comment).filter { !session.moderationService.isBlocked($0.userID) }) { reply in
                 ReplyRowView(reply: reply, parentUsername: comment.authorUsername)
             }
         }
         .confirmationDialog("Report this comment", isPresented: $showingReport) {
-            Button("Harassment or hate speech", role: .destructive) { session.moderationService.reportComment(comment, reason: "harassment") }
-            Button("Private personal information", role: .destructive) { session.moderationService.reportComment(comment, reason: "private_info") }
+            Button("Harassment or hate speech", role: .destructive) { session.moderationService.reportComment(comment, reporterID: session.currentProfile?.id, reason: "harassment") }
+            Button("Private personal information", role: .destructive) { session.moderationService.reportComment(comment, reporterID: session.currentProfile?.id, reason: "private_info") }
         }
     }
 
     private func addReply() {
         guard let profile = session.currentProfile ?? session.profileService.profiles.first else { return }
         let trimmed = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            showingReply = false
+            return
+        }
         let body = trimmed.hasPrefix("@") ? trimmed : "@\(comment.authorUsername) \(trimmed)"
         let reply = Comment(id: UUID(), postID: post.id, userID: profile.id, parentCommentID: comment.id, authorUsername: profile.username, textContent: body, imageURLs: [], imageData: [], likeCount: 0, createdAt: .now, updatedAt: .now)
         session.commentService.add(reply)

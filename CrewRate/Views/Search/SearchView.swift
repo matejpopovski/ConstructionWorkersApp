@@ -10,6 +10,8 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             let results = session.searchService.search(query: query, profiles: session.profileService.profiles, posts: session.postService.posts)
+            let visiblePosts = results.posts.filter { $0.userID == session.currentProfile?.id || !session.moderationService.isBlocked($0.userID) }
+            let visibleCompanies = Array(Set(visiblePosts.compactMap(\.companyOrEmployer))).sorted()
             List {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -42,7 +44,7 @@ struct SearchView: View {
                 }
                 if shouldShow("Job Reports") {
                     Section("Job Reports") {
-                        ForEach(results.posts) { post in
+                        ForEach(visiblePosts) { post in
                             PostCardView(post: post)
                                 .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                         }
@@ -50,7 +52,7 @@ struct SearchView: View {
                 }
                 if shouldShow("Companies") {
                     Section("Companies") {
-                        ForEach(results.companies, id: \.self) { company in
+                        ForEach(visibleCompanies, id: \.self) { company in
                             NavigationLink {
                                 CompanyWorkersView(company: company)
                             } label: {
@@ -59,12 +61,18 @@ struct SearchView: View {
                         }
                     }
                 }
-                if query.isEmpty == false && results.people.isEmpty && results.posts.isEmpty && results.companies.isEmpty {
+                if query.isEmpty == false && filteredPeople(results.people).isEmpty && visiblePosts.isEmpty && visibleCompanies.isEmpty {
                     EmptyStateView(title: "No matches", systemImage: "magnifyingglass")
                 }
             }
             .searchable(text: $query, prompt: "Workers, reports, city, company, job, pay")
             .navigationTitle("Search")
+            .refreshable {
+                session.refreshRemoteData()
+            }
+            .onAppear {
+                session.refreshRemoteData()
+            }
         }
     }
 
@@ -75,11 +83,11 @@ struct SearchView: View {
     private func filteredPeople(_ people: [Profile]) -> [Profile] {
         switch selectedFilter {
         case "Open to Work":
-            people.filter(\.openToWork)
+            people.filter { $0.openToWork && !session.moderationService.isBlocked($0.id) }
         case "Union":
-            people.filter { $0.unionStatus == .union }
+            people.filter { $0.unionStatus == .union && !session.moderationService.isBlocked($0.id) }
         default:
-            people
+            people.filter { $0.id == session.currentProfile?.id || !session.moderationService.isBlocked($0.id) }
         }
     }
 
@@ -105,13 +113,16 @@ struct CompanyWorkersView: View {
     let company: String
 
     private var companyPosts: [Post] {
-        session.searchService.posts(for: company, posts: session.postService.posts)
+        session.searchService.posts(for: company, posts: session.postService.posts).filter {
+            $0.userID == session.currentProfile?.id || !session.moderationService.isBlocked($0.userID)
+        }
     }
 
     private var workers: [Profile] {
         let workerIDs = Set(companyPosts.filter { !$0.isAnonymous || $0.userID == session.currentProfile?.id }.map(\.userID))
         return session.profileService.profiles
             .filter { workerIDs.contains($0.id) }
+            .filter { $0.id == session.currentProfile?.id || !session.moderationService.isBlocked($0.id) }
             .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
     }
 

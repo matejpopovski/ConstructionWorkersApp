@@ -154,12 +154,22 @@ struct CreatePostView: View {
         let post = Post(id: UUID(), userID: profile.id, authorUsername: profile.username, postType: .workReport, textContent: trimmedText, imageURLs: [], imageData: attachedImages, isAnonymous: isAnonymous, companyOrEmployer: trimmedCompany, tradePosition: trade, customTradePosition: trade == .other ? trimmedCustomTrade : nil, city: city, state: state, payType: payType, payAmount: amount, overtimeAvailable: overtimeAvailable, benefits: benefits.csvValues, supervisorFlexibilityRating: supervisorRating, treatmentRating: treatmentRating, safetyRating: safetyRating, workloadRating: workloadRating, payFairnessRating: payFairnessRating, wouldRecommend: wouldRecommend, tags: [tradeLabel, city, state, trimmedCompany, overtimeAvailable ? "Overtime" : nil, wouldRecommend ? "Recommended" : "Not recommended"].compactMap { $0 }.filter { !$0.isEmpty }, likeCount: 0, commentCount: 0, createdAt: .now, updatedAt: .now)
         session.postService.create(post)
         text = ""
+        isAnonymous = false
         company = ""
         city = nil
         state = nil
+        trade = .generalLaborer
         payAmount = ""
         benefits = ""
         customTrade = ""
+        payType = .hourly
+        safetyRating = 3
+        treatmentRating = 3
+        supervisorRating = 3
+        workloadRating = 3
+        payFairnessRating = 3
+        overtimeAvailable = false
+        wouldRecommend = true
         selectedPhoto = nil
         selectedPhotoData = nil
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -177,11 +187,12 @@ struct CreatePostView: View {
         selectedPhotoData = nil
         guard let item else { return }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self), UIImage(data: data) != nil else {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let optimizedData = ImageOptimizer.optimizedJPEGData(from: data, preset: .post) else {
                 photoErrorMessage = "That photo could not be loaded."
                 return
             }
-            selectedPhotoData = data
+            selectedPhotoData = optimizedData
         } catch {
             photoErrorMessage = "Photo attach failed. Please try another image."
         }

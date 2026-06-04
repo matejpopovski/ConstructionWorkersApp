@@ -1,5 +1,24 @@
 create extension if not exists "pgcrypto";
 
+drop table if exists public.messages cascade;
+drop table if exists public.conversation_members cascade;
+drop table if exists public.conversations cascade;
+drop table if exists public.blocked_users cascade;
+drop table if exists public.moderation_flags cascade;
+drop table if exists public.friendships cascade;
+drop table if exists public.friend_requests cascade;
+drop table if exists public.likes cascade;
+drop table if exists public.comments cascade;
+drop table if exists public.posts cascade;
+drop table if exists public.profiles cascade;
+
+drop type if exists public.report_target_type cascade;
+drop type if exists public.message_visibility cascade;
+drop type if exists public.friend_request_status cascade;
+drop type if exists public.post_type cascade;
+drop type if exists public.union_status cascade;
+drop type if exists public.pay_type cascade;
+
 create type public.pay_type as enum ('hourly', 'salary', 'piece-rate', 'contract');
 create type public.union_status as enum ('union', 'non-union', 'prefer not to say');
 create type public.post_type as enum ('general', 'work_report');
@@ -17,6 +36,7 @@ create table public.profiles (
   city text,
   street_address_private_only text,
   trade_position text,
+  custom_trade_position text,
   experience_level text,
   current_company_or_employer text,
   pay_type public.pay_type,
@@ -39,6 +59,27 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, username)
+  values (
+    new.id,
+    coalesce(nullif(new.raw_user_meta_data ->> 'username', ''), split_part(new.email, '@', 1))
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute procedure public.handle_new_user();
+
 create table public.posts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -48,6 +89,7 @@ create table public.posts (
   is_anonymous boolean not null default false,
   company_or_employer text,
   trade_position text,
+  custom_trade_position text,
   city text,
   state text,
   pay_type public.pay_type,
@@ -126,6 +168,15 @@ create table public.moderation_flags (
   created_at timestamptz not null default now()
 );
 
+create table public.blocked_users (
+  id uuid primary key default gen_random_uuid(),
+  blocker_id uuid not null references public.profiles(id) on delete cascade,
+  blocked_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint no_self_block check (blocker_id <> blocked_id),
+  unique (blocker_id, blocked_id)
+);
+
 create table public.conversations (
   id uuid primary key default gen_random_uuid(),
   title text,
@@ -145,17 +196,48 @@ create table public.messages (
   id uuid primary key default gen_random_uuid(),
   conversation_id uuid not null references public.conversations(id) on delete cascade,
   sender_id uuid not null references public.profiles(id) on delete cascade,
-  body text not null,
+  body text,
   image_urls text[] not null default '{}',
-  created_at timestamptz not null default now()
+  shared_post_id uuid references public.posts(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint message_has_content check (
+    body is not null
+    or cardinality(image_urls) > 0
+    or shared_post_id is not null
+  )
 );
 
-create index profiles_search_idx on public.profiles using gin (
-  to_tsvector('english', coalesce(username, '') || ' ' || coalesce(city, '') || ' ' || coalesce(state, '') || ' ' || coalesce(trade_position, '') || ' ' || coalesce(current_company_or_employer, ''))
-);
-create index posts_search_idx on public.posts using gin (
-  to_tsvector('english', coalesce(text_content, '') || ' ' || coalesce(company_or_employer, '') || ' ' || coalesce(city, '') || ' ' || coalesce(state, '') || ' ' || coalesce(trade_position, '') || ' ' || array_to_string(tags, ' '))
-);
+create index profiles_username_idx on public.profiles (lower(username));
+create index profiles_location_idx on public.profiles (state, city);
+create index profiles_trade_idx on public.profiles (trade_position);
+create index posts_company_idx on public.posts (lower(company_or_employer));
+create index posts_location_idx on public.posts (state, city);
+create index posts_trade_idx on public.posts (trade_position);
+
+grant usage on schema public to anon, authenticated;
+grant usage on type public.pay_type to anon, authenticated;
+grant usage on type public.union_status to anon, authenticated;
+grant usage on type public.post_type to anon, authenticated;
+grant usage on type public.friend_request_status to anon, authenticated;
+grant usage on type public.message_visibility to anon, authenticated;
+grant usage on type public.report_target_type to anon, authenticated;
+
+grant select on public.profiles to anon, authenticated;
+grant select on public.posts to anon, authenticated;
+grant select on public.comments to anon, authenticated;
+grant select on public.likes to anon, authenticated;
+
+grant insert, update, delete on public.profiles to authenticated;
+grant insert, update, delete on public.posts to authenticated;
+grant insert, update, delete on public.comments to authenticated;
+grant insert, delete on public.likes to authenticated;
+grant select, insert, update, delete on public.friend_requests to authenticated;
+grant select, insert, delete on public.friendships to authenticated;
+grant select, insert on public.moderation_flags to authenticated;
+grant select, insert, delete on public.blocked_users to authenticated;
+grant select, insert, update on public.conversations to authenticated;
+grant select, insert on public.conversation_members to authenticated;
+grant select, insert on public.messages to authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.posts enable row level security;
@@ -164,6 +246,7 @@ alter table public.likes enable row level security;
 alter table public.friend_requests enable row level security;
 alter table public.friendships enable row level security;
 alter table public.moderation_flags enable row level security;
+alter table public.blocked_users enable row level security;
 alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 alter table public.messages enable row level security;
@@ -198,11 +281,20 @@ create policy "friendships deleted by participant" on public.friendships for del
 create policy "users create reports" on public.moderation_flags for insert with check (auth.uid() = reporter_id);
 create policy "users view own reports" on public.moderation_flags for select using (auth.uid() = reporter_id);
 
+create policy "users view own blocks" on public.blocked_users for select using (auth.uid() = blocker_id);
+create policy "users create own blocks" on public.blocked_users for insert with check (auth.uid() = blocker_id);
+create policy "users delete own blocks" on public.blocked_users for delete using (auth.uid() = blocker_id);
+
 create policy "members view conversations" on public.conversations for select using (
   exists (select 1 from public.conversation_members cm where cm.conversation_id = id and cm.user_id = auth.uid())
 );
+create policy "authenticated users create conversations" on public.conversations for insert to authenticated with check (true);
 create policy "members view conversation members" on public.conversation_members for select using (
   exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
+);
+create policy "members add conversation members" on public.conversation_members for insert with check (
+  auth.uid() = user_id
+  or exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
 );
 create policy "members view messages" on public.messages for select using (
   exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
@@ -216,5 +308,16 @@ insert into storage.buckets (id, name, public)
 values
   ('profile-photos', 'profile-photos', true),
   ('post-images', 'post-images', true),
-  ('comment-images', 'comment-images', true)
+  ('comment-images', 'comment-images', true),
+  ('message-images', 'message-images', true)
 on conflict (id) do nothing;
+
+create policy "public profile photos are readable" on storage.objects for select using (bucket_id = 'profile-photos');
+create policy "public post images are readable" on storage.objects for select using (bucket_id = 'post-images');
+create policy "public comment images are readable" on storage.objects for select using (bucket_id = 'comment-images');
+create policy "public message images are readable" on storage.objects for select using (bucket_id = 'message-images');
+
+create policy "authenticated users upload profile photos" on storage.objects for insert to authenticated with check (bucket_id = 'profile-photos');
+create policy "authenticated users upload post images" on storage.objects for insert to authenticated with check (bucket_id = 'post-images');
+create policy "authenticated users upload comment images" on storage.objects for insert to authenticated with check (bucket_id = 'comment-images');
+create policy "authenticated users upload message images" on storage.objects for insert to authenticated with check (bucket_id = 'message-images');

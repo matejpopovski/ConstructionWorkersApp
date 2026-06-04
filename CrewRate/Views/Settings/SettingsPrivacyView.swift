@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsPrivacyView: View {
     @EnvironmentObject private var session: SessionViewModel
     @State private var profile = DemoData.currentUser
+    @State private var showingDeleteAccount = false
 
     var body: some View {
         Form {
@@ -26,15 +27,25 @@ struct SettingsPrivacyView: View {
             }
             Section {
                 Button("Save Privacy Settings") {
-                    session.currentProfile = profile
-                    session.profileService.update(profile)
+                    session.updateCurrentProfile(profile)
                 }
                 Button("Sign Out", role: .destructive) {
                     session.signOut()
                 }
+                Button("Delete Account", role: .destructive) {
+                    showingDeleteAccount = true
+                }
             }
         }
         .navigationTitle("Privacy")
+        .confirmationDialog("Delete your account?", isPresented: $showingDeleteAccount, titleVisibility: .visible) {
+            Button("Delete Account", role: .destructive) {
+                session.deleteCurrentAccount()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes your local account, profile, posts, comments, messages, and connection data from this device.")
+        }
         .onAppear {
             profile = session.currentProfile ?? DemoData.currentUser
         }

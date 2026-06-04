@@ -221,5 +221,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var receiverID: UUID
     var body: String
     var imageData: Data?
+    var imageURLs: [URL] = []
+    var sharedPostID: UUID?
     var createdAt: Date
 }

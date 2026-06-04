@@ -39,6 +39,12 @@ struct PublicProfileView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle(shownProfile.username)
+            .refreshable {
+                session.refreshRemoteData()
+            }
+            .onAppear {
+                session.refreshRemoteData()
+            }
             .toolbar {
                 if profile == nil {
                     NavigationLink("Edit") {
@@ -132,13 +138,31 @@ struct PublicProfileView: View {
                     Label("Message", systemImage: "message")
                 }
                 .buttonStyle(.bordered)
+                if session.moderationService.isBlocked(shownProfile.id) {
+                    Button {
+                        session.moderationService.unblockUser(shownProfile)
+                    } label: {
+                        Label("Unblock", systemImage: "person.crop.circle.badge.checkmark")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button(role: .destructive) {
+                        session.moderationService.blockUser(shownProfile, currentUserID: session.currentProfile?.id)
+                        session.friendService.remove(shownProfile)
+                    } label: {
+                        Label("Block", systemImage: "person.crop.circle.badge.xmark")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
     }
 
     private var visibleProfilePosts: [Post] {
         session.postService.posts.filter { post in
-            post.userID == shownProfile.id && (!post.isAnonymous || isCurrentUser)
+            post.userID == shownProfile.id
+                && (!post.isAnonymous || isCurrentUser)
+                && (isCurrentUser || !session.moderationService.isBlocked(post.userID))
         }
     }
 
@@ -239,11 +263,12 @@ struct EditProfileView: View {
         photoErrorMessage = nil
         guard let item else { return }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self), UIImage(data: data) != nil else {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let optimizedData = ImageOptimizer.optimizedJPEGData(from: data, preset: .profile) else {
                 photoErrorMessage = "That photo could not be loaded."
                 return
             }
-            profile.profilePhotoData = data
+            profile.profilePhotoData = optimizedData
         } catch {
             photoErrorMessage = "Profile photo attach failed. Please try another image."
         }
@@ -263,17 +288,23 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     let messages = session.messageService.thread(currentUserID: session.currentProfile?.id, friendID: profile.id)
-                    if messages.isEmpty {
+                    let visibleMessages = messages.filter {
+                        $0.senderID == session.currentProfile?.id || !session.moderationService.isBlocked($0.senderID)
+                    }
+                    if visibleMessages.isEmpty {
                         ContentUnavailableView("No messages yet", systemImage: "message", description: Text("Start a conversation with \(profile.username)."))
                             .padding(.top, 80)
                     } else {
-                        ForEach(messages) { message in
+                        ForEach(visibleMessages) { message in
                             ChatBubble(message: message, isMine: message.senderID == session.currentProfile?.id)
                         }
                     }
                 }
                 .padding()
                 .frame(maxWidth: .infinity)
+            }
+            .refreshable {
+                session.refreshRemoteData()
             }
             if let selectedPhotoData, let image = UIImage(data: selectedPhotoData) {
                 HStack {
@@ -317,6 +348,9 @@ struct ChatView: View {
             .background(.bar)
         }
         .navigationTitle(profile.username)
+        .onAppear {
+            session.messageService.refresh(currentUserID: session.currentProfile?.id)
+        }
         .onChange(of: selectedPhoto) { _, newItem in
             Task { await loadSelectedPhoto(newItem) }
         }
@@ -327,11 +361,12 @@ struct ChatView: View {
         selectedPhotoData = nil
         guard let item else { return }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self), UIImage(data: data) != nil else {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let optimizedData = ImageOptimizer.optimizedJPEGData(from: data, preset: .message) else {
                 photoErrorMessage = "That photo could not be loaded."
                 return
             }
-            selectedPhotoData = data
+            selectedPhotoData = optimizedData
         } catch {
             photoErrorMessage = "Photo attach failed. Please try another image."
         }
@@ -339,6 +374,7 @@ struct ChatView: View {
 }
 
 struct ChatBubble: View {
+    @EnvironmentObject private var session: SessionViewModel
     let message: ChatMessage
     let isMine: Bool
 
@@ -346,12 +382,42 @@ struct ChatBubble: View {
         HStack {
             if isMine { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 6) {
+                if let sharedPostID = message.sharedPostID {
+                    if let post = session.postService.posts.first(where: { $0.id == sharedPostID }) {
+                        NavigationLink {
+                            CommentsView(post: post)
+                        } label: {
+                            SharedPostPreview(post: post)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Label("Post no longer available", systemImage: "exclamationmark.triangle")
+                            .font(.subheadline)
+                    }
+                }
                 if let imageData = message.imageData, let image = UIImage(data: imageData) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
                         .frame(width: 180, height: 140)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else if let imageURL = message.imageURLs.first {
+                    AsyncImage(url: imageURL) { phase in
+                        switch phase {
+                        case let .success(image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure:
+                            Label("Photo unavailable", systemImage: "photo")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        default:
+                            ProgressView()
+                        }
+                    }
+                    .frame(width: 180, height: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 if !message.body.isEmpty {
                     Text(message.body)
@@ -366,5 +432,65 @@ struct ChatBubble: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             if !isMine { Spacer(minLength: 40) }
         }
+    }
+}
+
+struct SharedPostPreview: View {
+    let post: Post
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.fill")
+                    .foregroundStyle(Color.crewOrange)
+                Text("Shared Post")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(post.isAnonymous ? "Anonymous Worker" : post.authorUsername)
+                .font(.subheadline.bold())
+
+            if let company = post.companyOrEmployer {
+                Label(company, systemImage: "building.2")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let text = post.textContent, !text.isEmpty {
+                Text(text)
+                    .font(.subheadline)
+                    .lineLimit(3)
+            }
+
+            if let imageData = post.imageData.first, let image = UIImage(data: imageData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 90)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else if let imageURL = post.imageURLs.first {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        Color.crewGray.overlay(Image(systemName: "photo"))
+                    }
+                }
+                .frame(height: 90)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .frame(maxWidth: 240, alignment: .leading)
+        .padding(10)
+        .background(Color(.systemBackground).opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

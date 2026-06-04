@@ -14,18 +14,18 @@ Construction Gossip is an MVP native iPhone app for U.S. construction workers to
 
 - SwiftUI iOS app target: `CrewRate`
 - Clean MVVM-style folders: `Models`, `Views`, `ViewModels`, `Services`, `Components`, `Utilities`
-- Core tabs: Home, Search, Create Post, Friends, Profile
+- Core tabs: Home, Chat, Create Post, Search, Profile
 - Auth, signup, login, optional onboarding, profile editing, privacy settings
-- Construction employer reviews, pay/work condition reports, anonymous posting, one-like-per-user reactions, comments, one-level replies, sharing, and report placeholders
+- Construction employer reviews, pay/work condition reports, anonymous posting, one-like-per-user reactions, comments, one-level replies, sharing, and local report records
 - Search across people, posts, companies, location, trade, and open-to-work filters
-- Friend requests, friends list, and messaging placeholder
+- Follow requests, following list, chat, image messages, and in-app post previews
 - Supabase schema, RLS policies, storage buckets, and seed data
 
 ## Open in Xcode
 
 Open `CrewRate.xcodeproj` from this repository root.
 
-The app currently uses local demo services so the UI can run before Supabase credentials are configured. The service files are intentionally named for the production surface area:
+The app currently uses local services so the core product can run before production backend credentials are configured. The service files are intentionally named for the production surface area:
 
 - `AuthService`
 - `ProfileService`
@@ -41,7 +41,7 @@ The app currently uses local demo services so the UI can run before Supabase cre
 
 1. Create a Supabase project.
 2. In the Supabase SQL editor, run `Supabase/schema.sql`.
-3. For demo content, run `Supabase/seed.sql`.
+3. For seed content, run `Supabase/seed.sql`.
 4. Confirm these storage buckets exist:
    - `profile-photos`
    - `post-images`
@@ -54,7 +54,7 @@ The app currently uses local demo services so the UI can run before Supabase cre
 - Pay, company, trade, city, and state are optional.
 - Anonymous posting is supported.
 - Work reports show a warning before posting.
-- Reports and block-user placeholders are included for moderation expansion.
+- Reports are saved locally and blocked users are hidden from feeds, search, comments, and chats on this device.
 
 ## Build
 

@@ -28,5 +28,8 @@ struct RootView: View {
                 AuthView()
             }
         }
+        .onOpenURL { url in
+            session.handleDeepLink(url)
+        }
     }
 }

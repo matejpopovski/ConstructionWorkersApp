@@ -15,14 +15,32 @@ struct HomeFeedView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Construction Gossip")
+            .refreshable {
+                session.refreshRemoteData()
+            }
+            .onAppear {
+                session.refreshRemoteData()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     NavigationLink {
                         NotificationsView()
                     } label: {
-                        Image(systemName: "hammer.circle.fill")
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(Color.crewOrange, Color.crewNavy)
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "hammer.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(Color.crewOrange, Color.crewNavy)
+                            if notificationCount > 0 {
+                                Text(notificationCount > 99 ? "99+" : "\(notificationCount)")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, notificationCount > 9 ? 4 : 5)
+                                    .padding(.vertical, 2)
+                                    .background(Color.red)
+                                    .clipShape(Capsule())
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
                     }
                     NavigationLink {
                         SettingsPrivacyView()
@@ -34,9 +52,24 @@ struct HomeFeedView: View {
         }
     }
 
+    private var notificationCount: Int {
+        guard let currentUserID = session.currentProfile?.id else {
+            return session.friendService.pendingRequests.count
+        }
+        let myPostIDs = Set(session.postService.posts.filter { $0.userID == currentUserID }.map(\.id))
+        let commentNotifications = session.commentService.comments.filter { comment in
+            myPostIDs.contains(comment.postID)
+                && comment.userID != currentUserID
+                && comment.createdAt > Date().addingTimeInterval(-24 * 60 * 60)
+        }.count
+        return session.friendService.pendingRequests.count + commentNotifications + session.likeService.incomingLikeNotificationCount
+    }
+
     private var recommendedPosts: [Post] {
         let state = session.currentProfile?.state
-        return session.postService.posts.sorted { lhs, rhs in
+        return session.postService.posts.filter { post in
+            post.userID == session.currentProfile?.id || !session.moderationService.isBlocked(post.userID)
+        }.sorted { lhs, rhs in
             let lhsScore = lhs.userID == session.currentProfile?.id ? 2 : (lhs.state == state ? 1 : 0)
             let rhsScore = rhs.userID == session.currentProfile?.id ? 2 : (rhs.state == state ? 1 : 0)
             if lhsScore != rhsScore {
@@ -83,11 +116,25 @@ struct PostCardView: View {
                     .scaledToFill()
                     .frame(height: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else if !post.imageURLs.isEmpty {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.crewGray)
-                    .frame(height: 180)
-                    .overlay(Image(systemName: "photo").font(.largeTitle).foregroundStyle(.secondary))
+            } else if let imageURL = post.imageURLs.first {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        Label("Photo unavailable", systemImage: "photo")
+                            .frame(maxWidth: .infinity, minHeight: 180)
+                            .background(Color.crewGray)
+                    default:
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 180)
+                            .background(Color.crewGray)
+                    }
+                }
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
             badges
@@ -119,14 +166,14 @@ struct PostCardView: View {
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .sheet(isPresented: $showingShareSheet) {
-            ShareSheet(activityItems: [shareText])
+            ShareSheet(activityItems: [shareURL])
         }
         .sheet(isPresented: $showingFriendShare) {
             NavigationStack {
                 List {
                     ForEach(session.friendService.friends) { friend in
                         Button {
-                            session.messageService.send(to: friend, from: session.currentProfile, body: shareText, imageData: post.imageData.first)
+                            session.messageService.send(to: friend, from: session.currentProfile, body: "Shared a post with you", imageData: nil, sharedPostID: post.id)
                             sentToFriendName = friend.username
                             showingFriendShare = false
                         } label: {
@@ -176,9 +223,9 @@ struct PostCardView: View {
             }
         }
         .confirmationDialog("Report this post", isPresented: $showingReport) {
-            Button("Harassment or hate speech", role: .destructive) { session.moderationService.reportPost(post, reason: "harassment") }
-            Button("Private personal information", role: .destructive) { session.moderationService.reportPost(post, reason: "private_info") }
-            Button("False or unsafe claim", role: .destructive) { session.moderationService.reportPost(post, reason: "unsafe_claim") }
+            Button("Harassment or hate speech", role: .destructive) { session.moderationService.reportPost(post, reporterID: session.currentProfile?.id, reason: "harassment") }
+            Button("Private personal information", role: .destructive) { session.moderationService.reportPost(post, reporterID: session.currentProfile?.id, reason: "private_info") }
+            Button("False or unsafe claim", role: .destructive) { session.moderationService.reportPost(post, reporterID: session.currentProfile?.id, reason: "unsafe_claim") }
         }
     }
 
@@ -247,7 +294,8 @@ struct PostCardView: View {
     }
 
     private var authorProfile: Profile? {
-        session.profileService.profiles.first { $0.id == post.userID }
+        guard !session.moderationService.isBlocked(post.userID) else { return nil }
+        return session.profileService.profiles.first { $0.id == post.userID }
     }
 
     private var shareText: String {
@@ -255,6 +303,10 @@ struct PostCardView: View {
         let text = post.textContent ?? "Check out this construction review."
         let author = post.isAnonymous ? "Anonymous Worker" : post.authorUsername
         return "\(author) on Construction Gossip about \(company): \(text)"
+    }
+
+    private var shareURL: URL {
+        DeepLink.postURL(for: post)
     }
 
     private var averageRating: Int? {
@@ -292,6 +344,7 @@ struct PostAttributeResultsView: View {
 
     private var posts: [Post] {
         session.postService.posts.filter { post in
+            guard post.userID == session.currentProfile?.id || !session.moderationService.isBlocked(post.userID) else { return false }
             switch filter {
             case .job(let job):
                 return post.tradeLabel?.caseInsensitiveCompare(job) == .orderedSame

@@ -61,12 +61,20 @@ struct FriendsView: View {
             }
             .searchable(text: $conversationQuery, prompt: "Search conversations")
             .navigationTitle("Connections")
+            .refreshable {
+                session.refreshRemoteData()
+            }
+            .onAppear {
+                session.refreshRemoteData()
+            }
         }
     }
 
     private var conversationProfiles: [Profile] {
         let current = session.currentProfile.map { [$0] } ?? []
-        let profiles = (current + session.friendService.friends).uniquedByID()
+        let profiles = (current + session.friendService.friends)
+            .filter { $0.id == session.currentProfile?.id || !session.moderationService.isBlocked($0.id) }
+            .uniquedByID()
         let term = conversationQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !term.isEmpty else { return profiles }
         return profiles.filter {
@@ -76,13 +84,6 @@ struct FriendsView: View {
 
     private func messageLabel(for profile: Profile) -> String {
         profile.id == session.currentProfile?.id ? "\(profile.username) (you)" : profile.username
-    }
-}
-
-struct MessagePlaceholderView: View {
-    var body: some View {
-        ContentUnavailableView("Messages coming soon", systemImage: "message", description: Text("The database schema includes conversation tables for a future real-time chat build."))
-            .navigationTitle("Messages")
     }
 }
 

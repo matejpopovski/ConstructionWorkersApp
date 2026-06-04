@@ -34,16 +34,37 @@ struct MessagesView: View {
             }
             .searchable(text: $query, prompt: "Search messages")
             .navigationTitle("Chat")
+            .refreshable {
+                session.refreshRemoteData()
+            }
+            .onAppear {
+                session.messageService.refresh(currentUserID: session.currentProfile?.id)
+            }
         }
     }
 
     private var conversationProfiles: [Profile] {
         let current = session.currentProfile.map { [$0] } ?? []
-        let profiles = (current + session.friendService.friends).uniquedByID()
+        let profiles = (current + session.friendService.friends)
+            .filter { $0.id == session.currentProfile?.id || !session.moderationService.isBlocked($0.id) }
+            .uniquedByID()
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !term.isEmpty else { return profiles }
-        return profiles.filter {
+        let filteredProfiles = term.isEmpty ? profiles : profiles.filter {
             [$0.username, $0.displayName, $0.tradeLabel].compactMap { $0?.lowercased() }.contains { $0.contains(term) }
+        }
+        return filteredProfiles.sorted { lhs, rhs in
+            let lhsLatest = session.messageService.latestMessage(currentUserID: session.currentProfile?.id, friendID: lhs.id)?.createdAt
+            let rhsLatest = session.messageService.latestMessage(currentUserID: session.currentProfile?.id, friendID: rhs.id)?.createdAt
+            switch (lhsLatest, rhsLatest) {
+            case let (lhsDate?, rhsDate?):
+                return lhsDate > rhsDate
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            case (nil, nil):
+                return lhs.username.localizedCaseInsensitiveCompare(rhs.username) == .orderedAscending
+            }
         }
     }
 
@@ -54,6 +75,10 @@ struct MessagesView: View {
     private func lastMessagePreview(for profile: Profile) -> String {
         let messages = session.messageService.thread(currentUserID: session.currentProfile?.id, friendID: profile.id)
         guard let last = messages.last else { return "Start a conversation" }
+        if let sharedPostID = last.sharedPostID, let post = session.postService.posts.first(where: { $0.id == sharedPostID }) {
+            return "Shared post: \(post.companyOrEmployer ?? post.textContent ?? "Construction report")"
+        }
+        if last.sharedPostID != nil { return "Shared post" }
         if !last.body.isEmpty { return last.body }
         return "Photo"
     }
@@ -86,17 +111,36 @@ struct NotificationsView: View {
             }
 
             Section("Activity") {
-                if session.postService.posts.isEmpty {
+                if activityPosts.isEmpty {
                     EmptyStateView(title: "No activity yet", systemImage: "bell")
                 } else {
-                    ForEach(session.postService.posts.prefix(5)) { post in
-                        Label(notificationText(for: post), systemImage: "hammer.fill")
-                            .font(.subheadline)
+                    ForEach(activityPosts.prefix(10)) { post in
+                        NavigationLink {
+                            CommentsView(post: post)
+                        } label: {
+                            Label(notificationText(for: post), systemImage: "hammer.fill")
+                                .font(.subheadline)
+                        }
                     }
                 }
             }
         }
         .navigationTitle("Notifications")
+        .refreshable {
+            session.refreshRemoteData()
+        }
+        .onAppear {
+            session.refreshRemoteData()
+        }
+    }
+
+    private var activityPosts: [Post] {
+        let currentUserID = session.currentProfile?.id
+        let friendIDs = Set(session.friendService.friends.map(\.id))
+        return session.postService.posts.filter { post in
+            guard !session.moderationService.isBlocked(post.userID) else { return false }
+            return post.userID == currentUserID || friendIDs.contains(post.userID)
+        }
     }
 
     private func notificationText(for post: Post) -> String {
