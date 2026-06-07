@@ -18,7 +18,10 @@ enum DateDisplay {
         }
         if let hours = calendar.dateComponents([.hour], from: date, to: now).hour,
            hours < 24 {
-            if hours <= 0 { return "Just now" }
+            if hours <= 0 {
+                let minutes = max(0, calendar.dateComponents([.minute], from: date, to: now).minute ?? 0)
+                return minutes < 1 ? "Just now" : "\(minutes)m ago"
+            }
             return "\(hours)h ago"
         }
         return date.formatted(.dateTime.month(.abbreviated).day().year())

@@ -4,7 +4,7 @@ struct TermsAgreementView: View {
     let onAgree: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: CrewDesign.Spacing.md) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Terms of Use")
                     .font(.headline)
@@ -26,11 +26,11 @@ struct TermsAgreementView: View {
                         }
                     }
                 }
-                .padding(12)
+                .padding(CrewDesign.Spacing.md)
             }
             .frame(maxHeight: 260)
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(Color.crewGray)
+            .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
 
             PrimaryButton("Agree and Continue", systemImage: "checkmark.circle.fill", action: onAgree)
         }

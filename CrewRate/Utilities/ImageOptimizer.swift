@@ -11,7 +11,7 @@ enum ImageOptimizer {
             case .profile:
                 512
             case .post:
-                1280
+                1024
             case .message:
                 1024
             }
@@ -22,7 +22,7 @@ enum ImageOptimizer {
             case .profile:
                 0.72
             case .post:
-                0.78
+                0.68
             case .message:
                 0.74
             }

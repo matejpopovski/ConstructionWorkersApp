@@ -8,10 +8,10 @@ struct FriendsView: View {
         NavigationStack {
             List {
                 Section("Pending Follow Requests") {
-                    if session.friendService.pendingRequests.isEmpty {
+                    if incomingRequests.isEmpty {
                         EmptyStateView(title: "No pending requests", systemImage: "person.badge.clock")
                     } else {
-                        ForEach(session.friendService.pendingRequests) { request in
+                        ForEach(incomingRequests) { request in
                             HStack {
                                 Label(request.senderUsername, systemImage: "person.crop.circle")
                                 Spacer()
@@ -61,6 +61,10 @@ struct FriendsView: View {
             }
             .searchable(text: $conversationQuery, prompt: "Search conversations")
             .navigationTitle("Connections")
+            .navigationBarTitleDisplayMode(.inline)
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color.crewCanvas)
             .refreshable {
                 session.refreshRemoteData()
             }
@@ -80,6 +84,10 @@ struct FriendsView: View {
         return profiles.filter {
             [$0.username, $0.displayName, $0.tradeLabel].compactMap { $0?.lowercased() }.contains { $0.contains(term) }
         }
+    }
+
+    private var incomingRequests: [FriendRequest] {
+        session.friendService.incomingRequests(for: session.currentProfile?.id)
     }
 
     private func messageLabel(for profile: Profile) -> String {

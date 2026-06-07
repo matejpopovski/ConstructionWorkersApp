@@ -1,4 +1,5 @@
 import PhotosUI
+import LinkPresentation
 import SwiftUI
 import UIKit
 
@@ -16,13 +17,8 @@ struct PrimaryButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: systemImage ?? "checkmark")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.crewOrange)
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
         }
+        .buttonStyle(CrewPrimaryButtonStyle())
     }
 }
 
@@ -36,6 +32,109 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+final class AppShareItem: NSObject, UIActivityItemSource {
+    private let url: URL
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        url
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        url
+    }
+
+    func activityViewControllerLinkMetadata(_ activityViewController: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = "Construction Gossip"
+        metadata.originalURL = url
+        metadata.url = url
+        if let icon = UIImage(named: "BrandLogo") {
+            metadata.iconProvider = NSItemProvider(object: icon)
+        }
+        return metadata
+    }
+}
+
+@MainActor
+private final class RemoteImageLoader: ObservableObject {
+    enum State {
+        case loading
+        case loaded(UIImage)
+        case failed
+    }
+
+    @Published private(set) var state: State = .loading
+    private let url: URL
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func load() async {
+        guard case .loading = state else { return }
+        for attempt in 0..<2 {
+            do {
+                var request = URLRequest(url: url)
+                request.cachePolicy = attempt == 0 ? .returnCacheDataElseLoad : .reloadIgnoringLocalCacheData
+                request.timeoutInterval = 30
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      200..<300 ~= httpResponse.statusCode,
+                      let image = UIImage(data: data) else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+                state = .loaded(image)
+                return
+            } catch {
+                if attempt == 0 {
+                    try? await Task.sleep(for: .milliseconds(350))
+                }
+            }
+        }
+        state = .failed
+    }
+}
+
+struct RemoteImage<Content: View, Placeholder: View, Failure: View>: View {
+    @StateObject private var loader: RemoteImageLoader
+    private let content: (Image) -> Content
+    private let placeholder: () -> Placeholder
+    private let failure: () -> Failure
+
+    init(
+        url: URL,
+        @ViewBuilder content: @escaping (Image) -> Content,
+        @ViewBuilder placeholder: @escaping () -> Placeholder,
+        @ViewBuilder failure: @escaping () -> Failure
+    ) {
+        _loader = StateObject(wrappedValue: RemoteImageLoader(url: url))
+        self.content = content
+        self.placeholder = placeholder
+        self.failure = failure
+    }
+
+    var body: some View {
+        Group {
+            switch loader.state {
+            case .loading:
+                placeholder()
+            case .loaded(let image):
+                content(Image(uiImage: image))
+            case .failed:
+                failure()
+            }
+        }
+        .task { await loader.load() }
+    }
+}
+
 struct TextInputField: View {
     let title: String
     @Binding var text: String
@@ -45,9 +144,14 @@ struct TextInputField: View {
         TextField(title, text: $text, axis: axis)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-            .padding(12)
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, CrewDesign.Spacing.md)
+            .frame(minHeight: CrewDesign.Size.controlHeight)
+            .background(Color.crewGray)
+            .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous)
+                    .stroke(Color.crewDivider, lineWidth: 0.75)
+            }
     }
 }
 
@@ -65,17 +169,14 @@ struct ProfileImageView: View {
                     .scaledToFill()
                     .clipShape(Circle())
             } else if !anonymous, let url = profile?.profilePhotoURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: size * 0.5))
-                            .foregroundStyle(Color.crewOrange)
-                    }
+                RemoteImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    ProgressView()
+                } failure: {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: size * 0.5))
+                        .foregroundStyle(Color.crewOrange)
                 }
                 .clipShape(Circle())
             } else {
@@ -85,6 +186,11 @@ struct ProfileImageView: View {
             }
         }
         .frame(width: size, height: size)
+        .overlay {
+            Circle()
+                .stroke(Color.crewSurface, lineWidth: size >= 70 ? 3 : 2)
+                .shadow(color: .black.opacity(0.12), radius: 1)
+        }
         .accessibilityLabel(anonymous ? "Anonymous worker" : profile?.username ?? "Profile photo")
     }
 }
@@ -136,7 +242,8 @@ struct StateCityPicker: View {
                             cityText = suggestion
                             city = suggestion
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(CrewSecondaryButtonStyle())
+                        .fixedSize()
                     }
                 }
                 .padding(.vertical, 2)
@@ -158,17 +265,21 @@ struct RatingPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.subheadline.weight(.semibold))
-            HStack {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 6) {
                 ForEach(1...5, id: \.self) { rating in
                     Button {
-                        value = rating
+                        withAnimation(CrewDesign.standardAnimation) {
+                            value = rating
+                        }
                     } label: {
                         Image(systemName: rating <= value ? "star.fill" : "star")
                             .foregroundStyle(Color.crewOrange)
-                            .font(.title3)
+                            .font(.system(size: 21, weight: .medium))
+                            .frame(width: 34, height: 34)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CrewPressButtonStyle())
                 }
             }
         }
@@ -191,7 +302,7 @@ struct ImagePicker: View {
             Label("Add Photo", systemImage: "photo.on.rectangle")
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(CrewSecondaryButtonStyle())
     }
 }
 
@@ -216,11 +327,12 @@ struct ErrorView: View {
 
     var body: some View {
         Label(message, systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.red)
-            .padding()
+            .font(.subheadline)
+            .foregroundStyle(Color.red)
+            .padding(CrewDesign.Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.red.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
     }
 }
 
@@ -233,12 +345,13 @@ struct FilterChip: View {
         Button(action: action) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isSelected ? Color.crewOrange : Color(.secondarySystemBackground))
+                .padding(.horizontal, CrewDesign.Spacing.md)
+                .frame(height: CrewDesign.Size.compactControlHeight)
+                .background(isSelected ? Color.crewNavy : Color.crewGray)
                 .foregroundStyle(isSelected ? .white : .primary)
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))
         }
+        .buttonStyle(CrewPressButtonStyle())
     }
 }
 
@@ -248,11 +361,79 @@ struct BadgeView: View {
 
     var body: some View {
         Label(text, systemImage: systemImage ?? "tag")
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Color.crewGray)
             .foregroundStyle(Color.crewInk)
-            .clipShape(Capsule())
+            .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))
+    }
+}
+
+struct CrewSectionHeader: View {
+    let title: String
+    var subtitle: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CrewDesign.Spacing.xxs) {
+            Text(title)
+                .font(.title3.weight(.bold))
+            if let subtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct CrewActionButton: View {
+    let title: String
+    let systemImage: String
+    var prominent = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(prominent ? AnyCrewButtonStyle.primary : AnyCrewButtonStyle.secondary)
+    }
+}
+
+private struct AnyCrewButtonStyle: ButtonStyle {
+    enum Kind {
+        case primary
+        case secondary
+    }
+
+    static let primary = AnyCrewButtonStyle(kind: .primary)
+    static let secondary = AnyCrewButtonStyle(kind: .secondary)
+    let kind: Kind
+
+    func makeBody(configuration: Configuration) -> some View {
+        Group {
+            switch kind {
+            case .primary:
+                configuration.label
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: CrewDesign.Size.compactControlHeight)
+                    .padding(.horizontal, CrewDesign.Spacing.sm)
+                    .foregroundStyle(.white)
+                    .background(Color.crewNavy.opacity(configuration.isPressed ? 0.78 : 1))
+            case .secondary:
+                configuration.label
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: CrewDesign.Size.compactControlHeight)
+                    .padding(.horizontal, CrewDesign.Spacing.sm)
+                    .foregroundStyle(.primary)
+                    .background(Color.crewGray.opacity(configuration.isPressed ? 0.65 : 1))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))
+        .scaleEffect(configuration.isPressed ? 0.98 : 1)
+        .animation(CrewDesign.standardAnimation, value: configuration.isPressed)
     }
 }

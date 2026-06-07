@@ -67,6 +67,10 @@ struct SearchView: View {
             }
             .searchable(text: $query, prompt: "Workers, reports, city, company, job, pay")
             .navigationTitle("Search")
+            .navigationBarTitleDisplayMode(.inline)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.crewCanvas)
             .refreshable {
                 session.refreshRemoteData()
             }
@@ -92,13 +96,15 @@ struct SearchView: View {
     }
 
     private func personRow(_ profile: Profile) -> some View {
-        HStack {
+        HStack(spacing: CrewDesign.Spacing.sm) {
             ProfileImageView(profile: profile)
-            VStack(alignment: .leading) {
-                Text(profile.username).font(.headline)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(profile.username)
+                    .font(.subheadline.weight(.bold))
                 Text([profile.tradeLabel, profile.city, profile.state].compactMap { $0 }.joined(separator: " • "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
             if profile.openToWork {
@@ -163,5 +169,9 @@ struct CompanyWorkersView: View {
             }
         }
         .navigationTitle(company)
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.crewCanvas)
     }
 }

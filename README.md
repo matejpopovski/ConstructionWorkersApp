@@ -16,16 +16,16 @@ Construction Gossip is an MVP native iPhone app for U.S. construction workers to
 - Clean MVVM-style folders: `Models`, `Views`, `ViewModels`, `Services`, `Components`, `Utilities`
 - Core tabs: Home, Chat, Create Post, Search, Profile
 - Auth, signup, login, optional onboarding, profile editing, privacy settings
-- Construction employer reviews, pay/work condition reports, anonymous posting, one-like-per-user reactions, comments, one-level replies, sharing, and local report records
+- Construction employer reviews, pay/work condition reports, anonymous posting, one-like-per-user reactions, comments, one-level replies, sharing, and user reports
 - Search across people, posts, companies, location, trade, and open-to-work filters
 - Follow requests, following list, chat, image messages, and in-app post previews
-- Supabase schema, RLS policies, storage buckets, and seed data
+- Supabase schema, RLS policies, storage buckets, migration helpers, and production audit notes
 
 ## Open in Xcode
 
 Open `CrewRate.xcodeproj` from this repository root.
 
-The app currently uses local services so the core product can run before production backend credentials are configured. The service files are intentionally named for the production surface area:
+The app now uses Supabase for authentication, profiles, posts, comments, likes, follows, reports, blocks, chat messages, and media URLs. Local storage is used only as lightweight on-device cache for smoother UI continuity.
 
 - `AuthService`
 - `ProfileService`
@@ -46,7 +46,11 @@ The app currently uses local services so the core product can run before product
    - `profile-photos`
    - `post-images`
    - `comment-images`
-5. Replace the local demo service implementations with Supabase client calls.
+   - `message-images`
+5. Run the migration helpers in `Supabase/` if the project already existed before the latest schema changes:
+   - `add_auth_profile_trigger.sql`
+   - `grant_api_permissions.sql`
+   - `add_post_custom_trade_position.sql`
 
 ## Privacy Notes
 
@@ -54,7 +58,8 @@ The app currently uses local services so the core product can run before product
 - Pay, company, trade, city, and state are optional.
 - Anonymous posting is supported.
 - Work reports show a warning before posting.
-- Reports are saved locally and blocked users are hidden from feeds, search, comments, and chats on this device.
+- Reports and blocks are synced through Supabase tables and are used to hide blocked users from feeds, search, comments, and chats.
+- See `SOCIAL_APP_PRODUCTION_AUDIT.md` before public launch for remaining moderation, notification, security, and backend hardening work.
 
 ## Build
 

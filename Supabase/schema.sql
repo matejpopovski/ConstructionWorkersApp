@@ -251,6 +251,51 @@ alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 alter table public.messages enable row level security;
 
+create or replace function public.get_or_create_direct_conversation(other_user_id uuid)
+returns table (get_or_create_direct_conversation uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  found_conversation_id uuid;
+begin
+  if current_user_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select cm1.conversation_id
+  into found_conversation_id
+  from public.conversation_members cm1
+  join public.conversation_members cm2
+    on cm2.conversation_id = cm1.conversation_id
+  where cm1.user_id = current_user_id
+    and cm2.user_id = other_user_id
+    and (
+      select count(*)
+      from public.conversation_members members
+      where members.conversation_id = cm1.conversation_id
+    ) = case when current_user_id = other_user_id then 1 else 2 end
+  limit 1;
+
+  if found_conversation_id is null then
+    insert into public.conversations default values
+    returning id into found_conversation_id;
+    insert into public.conversation_members (conversation_id, user_id)
+    values (found_conversation_id, current_user_id);
+    if other_user_id <> current_user_id then
+      insert into public.conversation_members (conversation_id, user_id)
+      values (found_conversation_id, other_user_id);
+    end if;
+  end if;
+
+  return query select found_conversation_id;
+end;
+$$;
+
+grant execute on function public.get_or_create_direct_conversation(uuid) to authenticated;
+
 create policy "profiles are readable" on public.profiles for select using (true);
 create policy "users insert own profile" on public.profiles for insert with check (auth.uid() = id);
 create policy "users update own profile" on public.profiles for update using (auth.uid() = id) with check (auth.uid() = id);
@@ -274,7 +319,7 @@ create policy "send own friend request" on public.friend_requests for insert wit
 create policy "receiver updates request" on public.friend_requests for update using (auth.uid() = receiver_id) with check (auth.uid() = receiver_id);
 create policy "participants delete request" on public.friend_requests for delete using (auth.uid() in (sender_id, receiver_id));
 
-create policy "friendships visible to participants" on public.friendships for select using (auth.uid() in (user_id, friend_id));
+create policy "friendships are readable" on public.friendships for select to authenticated using (true);
 create policy "friendships inserted by participant" on public.friendships for insert with check (auth.uid() in (user_id, friend_id));
 create policy "friendships deleted by participant" on public.friendships for delete using (auth.uid() in (user_id, friend_id));
 

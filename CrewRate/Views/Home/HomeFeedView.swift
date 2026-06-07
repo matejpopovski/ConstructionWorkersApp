@@ -6,15 +6,25 @@ struct HomeFeedView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: CrewDesign.Spacing.sm) {
+                    CrewSectionHeader(
+                        title: "Your crew feed",
+                        subtitle: "Recent job reports and local worker activity"
+                    )
+                    .padding(.horizontal, CrewDesign.Spacing.xxs)
+                    .padding(.bottom, CrewDesign.Spacing.xxs)
+
                     ForEach(recommendedPosts) { post in
                         PostCardView(post: post)
                     }
                 }
-                .padding()
+                .padding(.horizontal, CrewDesign.Spacing.sm)
+                .padding(.top, CrewDesign.Spacing.sm)
+                .padding(.bottom, CrewDesign.Spacing.xxl)
             }
-            .background(Color(.systemGroupedBackground))
+            .crewScreenBackground()
             .navigationTitle("Construction Gossip")
+            .navigationBarTitleDisplayMode(.inline)
             .refreshable {
                 session.refreshRemoteData()
             }
@@ -27,69 +37,50 @@ struct HomeFeedView: View {
                         NotificationsView()
                     } label: {
                         ZStack(alignment: .topTrailing) {
-                            Image(systemName: "hammer.circle.fill")
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(Color.crewOrange, Color.crewNavy)
-                            if notificationCount > 0 {
-                                Text(notificationCount > 99 ? "99+" : "\(notificationCount)")
+                            Image(systemName: "bell")
+                                .foregroundStyle(Color.crewNavy)
+                            if session.unreadNotificationCount > 0 {
+                                Text(session.unreadNotificationCount > 99 ? "99+" : "\(session.unreadNotificationCount)")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.white)
-                                    .padding(.horizontal, notificationCount > 9 ? 4 : 5)
+                                    .padding(.horizontal, session.unreadNotificationCount > 9 ? 4 : 5)
                                     .padding(.vertical, 2)
                                     .background(Color.red)
                                     .clipShape(Capsule())
-                                    .offset(x: 8, y: -8)
+                                    .offset(x: 7, y: -6)
                             }
                         }
+                        .frame(width: CrewDesign.Size.iconButton + 8, height: CrewDesign.Size.iconButton + 8)
                     }
                     NavigationLink {
-                        SettingsPrivacyView()
+                        ActivityView()
                     } label: {
-                        Image(systemName: "gearshape")
+                        Image(systemName: "bolt")
+                            .frame(width: CrewDesign.Size.iconButton, height: CrewDesign.Size.iconButton)
                     }
                 }
             }
         }
     }
 
-    private var notificationCount: Int {
-        guard let currentUserID = session.currentProfile?.id else {
-            return session.friendService.pendingRequests.count
-        }
-        let myPostIDs = Set(session.postService.posts.filter { $0.userID == currentUserID }.map(\.id))
-        let commentNotifications = session.commentService.comments.filter { comment in
-            myPostIDs.contains(comment.postID)
-                && comment.userID != currentUserID
-                && comment.createdAt > Date().addingTimeInterval(-24 * 60 * 60)
-        }.count
-        return session.friendService.pendingRequests.count + commentNotifications + session.likeService.incomingLikeNotificationCount
-    }
-
     private var recommendedPosts: [Post] {
-        let state = session.currentProfile?.state
         return session.postService.posts.filter { post in
             post.userID == session.currentProfile?.id || !session.moderationService.isBlocked(post.userID)
-        }.sorted { lhs, rhs in
-            let lhsScore = lhs.userID == session.currentProfile?.id ? 2 : (lhs.state == state ? 1 : 0)
-            let rhsScore = rhs.userID == session.currentProfile?.id ? 2 : (rhs.state == state ? 1 : 0)
-            if lhsScore != rhsScore {
-                return lhsScore > rhsScore
-            }
-            return lhs.createdAt > rhs.createdAt
-        }
+        }.sorted { $0.createdAt > $1.createdAt }
     }
 }
 
 struct PostCardView: View {
     @EnvironmentObject private var session: SessionViewModel
     let post: Post
+    var onCommentTap: (() -> Void)? = nil
     @State private var showingReport = false
     @State private var showingShareSheet = false
     @State private var showingFriendShare = false
     @State private var sentToFriendName: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: CrewDesign.Spacing.sm) {
             HStack(alignment: .top) {
                 authorHeader
                 Spacer()
@@ -102,71 +93,93 @@ struct PostCardView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .frame(width: CrewDesign.Size.iconButton, height: CrewDesign.Size.iconButton)
+                        .contentShape(Rectangle())
                 }
+            }
+
+            if let company = post.companyOrEmployer {
+                Text(company)
+                    .font(.title3.weight(.bold))
             }
 
             if let text = post.textContent, !text.isEmpty {
                 Text(text)
                     .font(.body)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let firstImageData = post.imageData.first, let image = UIImage(data: firstImageData) {
+            if let firstImageData = livePost.imageData.first, let image = UIImage(data: firstImageData) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(height: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else if let imageURL = post.imageURLs.first {
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        Label("Photo unavailable", systemImage: "photo")
-                            .frame(maxWidth: .infinity, minHeight: 180)
-                            .background(Color.crewGray)
-                    default:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 180)
-                            .background(Color.crewGray)
-                    }
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
+            } else if let imageURL = livePost.imageURLs.first {
+                RemoteImage(url: imageURL) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .background(Color.crewGray)
+                } failure: {
+                    Label("Photo unavailable", systemImage: "photo")
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .background(Color.crewGray)
                 }
                 .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
             }
 
             badges
 
-            HStack {
+            Divider()
+
+            HStack(spacing: 0) {
                 Button {
-                    session.likeService.togglePost(post, postService: session.postService)
+                    withAnimation(CrewDesign.standardAnimation) {
+                        session.likeService.togglePost(post, postService: session.postService)
+                    }
                 } label: {
-                    Label("\(post.likeCount)", systemImage: session.likeService.isPostLiked(post) ? "heart.fill" : "heart")
+                    Label("\(livePost.likeCount)", systemImage: session.likeService.isPostLiked(livePost) ? "heart.fill" : "heart")
                         .foregroundStyle(session.likeService.isPostLiked(post) ? .red : Color.crewNavy)
+                        .frame(maxWidth: .infinity)
                 }
-                NavigationLink {
-                    CommentsView(post: post)
-                } label: {
-                    Label("\(session.commentService.totalCount(for: post))", systemImage: "bubble.left")
+                if let onCommentTap {
+                    Button(action: onCommentTap) {
+                        Label("\(session.commentService.totalCount(for: livePost))", systemImage: "bubble.left")
+                            .frame(maxWidth: .infinity)
+                    }
+                } else {
+                    NavigationLink {
+                        CommentsView(post: livePost, focusComposerOnAppear: true)
+                    } label: {
+                        Label("\(session.commentService.totalCount(for: livePost))", systemImage: "bubble.left")
+                            .frame(maxWidth: .infinity)
+                    }
                 }
                 Button { showingShareSheet = true } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
+                    Image(systemName: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Share")
                 }
                 Button { showingFriendShare = true } label: {
-                    Label("Send", systemImage: "person.2")
+                    Image(systemName: "paperplane")
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Send")
                 }
-                Spacer()
             }
-            .buttonStyle(.borderless)
+            .font(.subheadline.weight(.semibold))
+            .frame(height: CrewDesign.Size.compactControlHeight)
+            .buttonStyle(CrewPressButtonStyle())
             .foregroundStyle(Color.crewNavy)
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .crewCard()
         .sheet(isPresented: $showingShareSheet) {
-            ShareSheet(activityItems: [shareURL])
+            ShareSheet(activityItems: [AppShareItem(url: shareURL)])
         }
         .sheet(isPresented: $showingFriendShare) {
             NavigationStack {
@@ -189,7 +202,10 @@ struct PostCardView: View {
                                 }
                                 Spacer()
                                 Image(systemName: "paperplane.fill")
-                                    .foregroundStyle(Color.crewNavy)
+                                    .foregroundStyle(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(Color.crewNavy)
+                                    .clipShape(Circle())
                             }
                             .padding(.vertical, 4)
                         }
@@ -211,7 +227,7 @@ struct PostCardView: View {
                     .font(.caption.bold())
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(.green)
+                    .background(Color.crewNavy)
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
                     .padding(.top, 8)
@@ -244,15 +260,17 @@ struct PostCardView: View {
     }
 
     private var headerContent: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: CrewDesign.Spacing.sm) {
             ProfileImageView(profile: authorProfile, anonymous: post.isAnonymous)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(post.isAnonymous ? "Anonymous Worker" : post.authorUsername)
-                    .font(.headline)
+                    .font(.subheadline.weight(.bold))
                     .foregroundStyle(.primary)
-                Text(DateDisplay.label(for: post.createdAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                TimelineView(.periodic(from: .now, by: 30)) { _ in
+                    Text(metadataLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -298,6 +316,16 @@ struct PostCardView: View {
         return session.profileService.profiles.first { $0.id == post.userID }
     }
 
+    private var livePost: Post {
+        session.postService.posts.first(where: { $0.id == post.id }) ?? post
+    }
+
+    private var metadataLine: String {
+        let date = DateDisplay.label(for: post.createdAt)
+        let location = [post.city, post.state].compactMap { $0 }.joined(separator: ", ")
+        return location.isEmpty ? date : "\(date) • \(location)"
+    }
+
     private var shareText: String {
         let company = post.companyOrEmployer ?? "a construction job"
         let text = post.textContent ?? "Check out this construction review."
@@ -326,7 +354,7 @@ struct FlowLayout<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: CrewDesign.Spacing.xs)], alignment: .leading, spacing: CrewDesign.Spacing.xs) {
             content
         }
     }

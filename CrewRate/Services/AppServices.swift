@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 enum AppError: LocalizedError {
@@ -25,7 +24,6 @@ struct StoredAccount: Codable, Identifiable, Equatable {
     var id: UUID
     var username: String
     var email: String
-    var passwordHash: String
     var profile: Profile
 }
 
@@ -40,10 +38,6 @@ enum LocalStore {
     private static let messagesKey = "crewRate.messages"
     private static let reportsKey = "crewRate.reports"
     private static let blockedUsersKey = "crewRate.blockedUsers"
-
-    static func passwordHash(_ password: String) -> String {
-        SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
 
     static func loadAccounts() -> [StoredAccount] {
         load([StoredAccount].self, key: accountsKey, fallback: [])
@@ -155,16 +149,14 @@ final class AuthService: ObservableObject {
         guard password.count >= 8 else {
             throw AppError.weakPassword
         }
-        guard !accounts.contains(where: { $0.username.lowercased() == normalizedUsername.lowercased() })
-                && !DemoData.profiles.contains(where: { $0.username.lowercased() == normalizedUsername.lowercased() }) else {
+        guard !accounts.contains(where: { $0.username.lowercased() == normalizedUsername.lowercased() }) else {
             throw AppError.duplicateUsername
         }
-        guard !accounts.contains(where: { $0.email.lowercased() == normalizedEmail })
-                && !DemoData.profiles.contains(where: { $0.email?.lowercased() == normalizedEmail }) else {
+        guard !accounts.contains(where: { $0.email.lowercased() == normalizedEmail }) else {
             throw AppError.duplicateEmail
         }
         let profile = try await SupabaseClient.signUp(username: normalizedUsername, email: normalizedEmail, password: password)
-        accounts.append(StoredAccount(id: profile.id, username: normalizedUsername, email: normalizedEmail, passwordHash: LocalStore.passwordHash(password), profile: profile))
+        accounts.append(StoredAccount(id: profile.id, username: normalizedUsername, email: normalizedEmail, profile: profile))
         LocalStore.saveAccounts(accounts)
         currentProfile = profile
         return profile
@@ -172,28 +164,28 @@ final class AuthService: ObservableObject {
 
     func login(email: String, password: String) async throws -> Profile {
         let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let hash = LocalStore.passwordHash(password)
-        do {
-            var profile = try await SupabaseClient.login(email: normalizedEmail, password: password)
-            profile.email = normalizedEmail
-            if let index = accounts.firstIndex(where: { $0.id == profile.id }) {
-                accounts[index].profile = profile
-            } else {
-                accounts.append(StoredAccount(id: profile.id, username: profile.username, email: normalizedEmail, passwordHash: hash, profile: profile))
-            }
-            LocalStore.saveAccounts(accounts)
-            currentProfile = profile
-            return profile
-        } catch {
-            guard let account = accounts.first(where: { $0.email.lowercased() == normalizedEmail && $0.passwordHash == hash }) else {
-                throw error
-            }
-            currentProfile = account.profile
-            return account.profile
+        var profile = try await SupabaseClient.login(email: normalizedEmail, password: password)
+        profile.email = normalizedEmail
+        if let index = accounts.firstIndex(where: { $0.id == profile.id }) {
+            accounts[index].profile = profile
+        } else {
+            accounts.append(StoredAccount(id: profile.id, username: profile.username, email: normalizedEmail, profile: profile))
         }
+        LocalStore.saveAccounts(accounts)
+        currentProfile = profile
+        return profile
     }
 
-    func updateAccountProfile(_ profile: Profile) {
+    func restoreSession() async throws -> Profile? {
+        guard var profile = try await SupabaseClient.restoreSession() else { return nil }
+        if let account = accounts.first(where: { $0.id == profile.id }) {
+            profile.email = account.email
+        }
+        currentProfile = profile
+        return profile
+    }
+
+    func updateAccountProfile(_ profile: Profile, syncRemote: Bool = true) {
         if let index = accounts.firstIndex(where: { $0.id == profile.id }) {
             accounts[index].username = profile.username
             accounts[index].email = profile.email ?? accounts[index].email
@@ -201,7 +193,19 @@ final class AuthService: ObservableObject {
         }
         LocalStore.saveAccounts(accounts)
         currentProfile = profile
-        Task { try? await SupabaseClient.upsertProfile(profile) }
+        guard syncRemote else { return }
+        Task {
+            guard var remoteProfile = try? await SupabaseClient.upsertProfile(profile) else { return }
+            remoteProfile.email = profile.email
+            remoteProfile.profilePhotoData = profile.profilePhotoData
+            if let index = accounts.firstIndex(where: { $0.id == remoteProfile.id }) {
+                accounts[index].username = remoteProfile.username
+                accounts[index].email = remoteProfile.email ?? accounts[index].email
+                accounts[index].profile = remoteProfile
+                LocalStore.saveAccounts(accounts)
+            }
+            currentProfile = remoteProfile
+        }
     }
 
     func signOut() {
@@ -225,7 +229,7 @@ final class ProfileService: ObservableObject {
 
     init() {
         let accountProfiles = LocalStore.loadAccounts().map(\.profile)
-        profiles = (accountProfiles + DemoData.profiles).uniquedByIdentity()
+        profiles = accountProfiles.uniquedByIdentity()
         Task {
             if let remoteProfiles = try? await SupabaseClient.fetchProfiles(), !remoteProfiles.isEmpty {
                 profiles = remoteProfiles.uniquedByIdentity()
@@ -241,7 +245,7 @@ final class ProfileService: ObservableObject {
         }
     }
 
-    func update(_ profile: Profile) {
+    func update(_ profile: Profile, syncRemote: Bool = true) {
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[index] = profile
         } else if let index = profiles.firstIndex(where: { $0.username.lowercased() == profile.username.lowercased() }) {
@@ -249,7 +253,15 @@ final class ProfileService: ObservableObject {
         } else {
             profiles.append(profile)
         }
-        Task { try? await SupabaseClient.upsertProfile(profile) }
+        guard syncRemote else { return }
+        Task {
+            guard let remoteProfile = try? await SupabaseClient.upsertProfile(profile),
+                  let index = profiles.firstIndex(where: { $0.id == remoteProfile.id }) else { return }
+            var merged = remoteProfile
+            merged.email = profile.email
+            merged.profilePhotoData = profile.profilePhotoData
+            profiles[index] = merged
+        }
     }
 
     func remove(profileID: UUID) {
@@ -264,7 +276,7 @@ final class PostService: ObservableObject {
     }
 
     init() {
-        posts = (LocalStore.loadPosts() ?? DemoData.posts).sorted { $0.createdAt > $1.createdAt }
+        posts = (LocalStore.loadPosts() ?? []).sorted { $0.createdAt > $1.createdAt }
         Task {
             if let remotePosts = try? await SupabaseClient.fetchPosts() {
                 posts = remotePosts.sorted { $0.createdAt > $1.createdAt }
@@ -276,7 +288,14 @@ final class PostService: ObservableObject {
         Task {
             if let remotePosts = try? await SupabaseClient.fetchPosts() {
                 posts = remotePosts
-                    .map { enrich($0, profiles: profiles, comments: comments) }
+                    .map { remotePost in
+                        var enriched = enrich(remotePost, profiles: profiles, comments: comments)
+                        if let localPost = posts.first(where: { $0.id == remotePost.id }) {
+                            enriched.imageData = localPost.imageData
+                            enriched.likeCount = localPost.likeCount
+                        }
+                        return enriched
+                    }
                     .sorted { $0.createdAt > $1.createdAt }
             }
         }
@@ -339,7 +358,7 @@ final class CommentService: ObservableObject {
     }
 
     init() {
-        comments = LocalStore.loadComments() ?? DemoData.comments
+        comments = LocalStore.loadComments() ?? []
         Task {
             if let remoteComments = try? await SupabaseClient.fetchComments() {
                 comments = remoteComments
@@ -354,6 +373,10 @@ final class CommentService: ObservableObject {
                     var enriched = comment
                     if let profile = profiles.first(where: { $0.id == comment.userID }) {
                         enriched.authorUsername = profile.username
+                    }
+                    if let localComment = comments.first(where: { $0.id == comment.id }) {
+                        enriched.imageData = localComment.imageData
+                        enriched.likeCount = localComment.likeCount
                     }
                     return enriched
                 }
@@ -411,6 +434,7 @@ final class FriendService: ObservableObject {
     @Published var pendingRequests: [FriendRequest] {
         didSet { LocalStore.savePendingRequests(pendingRequests) }
     }
+    @Published private(set) var connectionsByProfileID: [UUID: [Profile]] = [:]
 
     init() {
         friends = (LocalStore.loadFriends() ?? [])
@@ -426,12 +450,28 @@ final class FriendService: ObservableObject {
             let remoteRequests = (try? await SupabaseClient.fetchFriendRequests(currentUserID: currentUserID)) ?? []
             let friendIDs = (try? await SupabaseClient.fetchFriendships(currentUserID: currentUserID)) ?? []
             pendingRequests = remoteRequests
-                .filter { $0.status == .pending && $0.receiverID == currentUserID && $0.senderID != currentUserID }
+                .filter { $0.status == .pending && $0.senderID != $0.receiverID }
+                .filter { $0.senderID == currentUserID || $0.receiverID == currentUserID }
             friends = profiles
                 .filter { friendIDs.contains($0.id) && $0.id != currentUserID }
                 .uniquedByIdentity()
                 .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+            connectionsByProfileID[currentUserID] = friends
         }
+    }
+
+    func refreshConnections(for profileID: UUID, profiles: [Profile]) {
+        Task {
+            guard let friendIDs = try? await SupabaseClient.fetchFriendships(currentUserID: profileID) else { return }
+            connectionsByProfileID[profileID] = profiles
+                .filter { friendIDs.contains($0.id) && $0.id != profileID }
+                .uniquedByIdentity()
+                .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+        }
+    }
+
+    func connections(for profileID: UUID) -> [Profile] {
+        connectionsByProfileID[profileID] ?? []
     }
 
     func isFriend(_ profile: Profile) -> Bool {
@@ -442,9 +482,31 @@ final class FriendService: ObservableObject {
         pendingRequests.contains { $0.receiverID == profile.id || $0.senderID == profile.id }
     }
 
+    func incomingRequests(for currentUserID: UUID?) -> [FriendRequest] {
+        guard let currentUserID else { return [] }
+        return pendingRequests.filter {
+            $0.status == .pending && $0.receiverID == currentUserID && $0.senderID != currentUserID
+        }
+    }
+
     func sendRequest(to profile: Profile, from currentProfile: Profile?) {
         guard !isFriend(profile), !hasPendingRequest(to: profile), let currentProfile, profile.id != currentProfile.id else { return }
-        Task { try? await SupabaseClient.sendFriendRequest(to: profile.id, senderUsername: currentProfile.username) }
+        let request = FriendRequest(
+            id: UUID(),
+            senderID: currentProfile.id,
+            receiverID: profile.id,
+            senderUsername: currentProfile.username,
+            status: .pending,
+            createdAt: .now
+        )
+        pendingRequests.append(request)
+        Task {
+            do {
+                try await SupabaseClient.sendFriendRequest(to: profile.id, senderUsername: currentProfile.username)
+            } catch {
+                pendingRequests.removeAll { $0.id == request.id }
+            }
+        }
     }
 
     func accept(_ request: FriendRequest, profiles: [Profile]) {
@@ -463,6 +525,8 @@ final class FriendService: ObservableObject {
 
     func remove(_ profile: Profile) {
         friends.removeAll { $0.id == profile.id }
+        connectionsByProfileID = connectionsByProfileID.mapValues { $0.filter { $0.id != profile.id } }
+        Task { try? await SupabaseClient.removeFriendship(with: profile.id) }
     }
 
     func remove(profileID: UUID) {
@@ -504,6 +568,7 @@ final class SearchService {
 @MainActor
 final class LikeService: ObservableObject {
     @Published private(set) var incomingLikeNotificationCount = 0
+    @Published private(set) var likes: [LikeRow] = []
     @Published private(set) var likedPostIDs: Set<UUID> {
         didSet { LocalStore.saveLikedPosts(likedPostIDs) }
     }
@@ -518,16 +583,17 @@ final class LikeService: ObservableObject {
 
     func refresh(currentUserID: UUID?, postService: PostService, commentService: CommentService) {
         Task {
-            guard let likes = try? await SupabaseClient.fetchLikes() else { return }
-            let postCounts = Dictionary(grouping: likes.compactMap(\.postId), by: { $0 }).mapValues(\.count)
-            let commentCounts = Dictionary(grouping: likes.compactMap(\.commentId), by: { $0 }).mapValues(\.count)
+            guard let remoteLikes = try? await SupabaseClient.fetchLikes() else { return }
+            likes = remoteLikes
+            let postCounts = Dictionary(grouping: remoteLikes.compactMap(\.postId), by: { $0 }).mapValues(\.count)
+            let commentCounts = Dictionary(grouping: remoteLikes.compactMap(\.commentId), by: { $0 }).mapValues(\.count)
             postService.applyLikeCounts(postCounts)
             commentService.applyLikeCounts(commentCounts)
             guard let currentUserID else { return }
-            likedPostIDs = Set(likes.filter { $0.userId == currentUserID }.compactMap(\.postId))
-            likedCommentIDs = Set(likes.filter { $0.userId == currentUserID }.compactMap(\.commentId))
+            likedPostIDs = Set(remoteLikes.filter { $0.userId == currentUserID }.compactMap(\.postId))
+            likedCommentIDs = Set(remoteLikes.filter { $0.userId == currentUserID }.compactMap(\.commentId))
             let myPostIDs = Set(postService.posts.filter { $0.userID == currentUserID }.map(\.id))
-            incomingLikeNotificationCount = likes.filter { like in
+            incomingLikeNotificationCount = remoteLikes.filter { like in
                 guard let postID = like.postId else { return false }
                 return myPostIDs.contains(postID) && like.userId != currentUserID
             }.count
@@ -569,6 +635,7 @@ final class LikeService: ObservableObject {
 
 @MainActor
 final class MessageService: ObservableObject {
+    @Published private(set) var errorMessage: String?
     @Published var messages: [ChatMessage] {
         didSet { LocalStore.saveMessages(messages) }
     }
@@ -605,10 +672,15 @@ final class MessageService: ObservableObject {
         let pendingMessage = ChatMessage(id: UUID(), senderID: sender.id, receiverID: receiver.id, body: trimmed, imageData: imageData, sharedPostID: sharedPostID, createdAt: .now)
         messages.append(pendingMessage)
         Task {
-            if let remoteMessage = try? await SupabaseClient.sendMessage(pendingMessage) {
+            do {
+                let remoteMessage = try await SupabaseClient.sendMessage(pendingMessage)
                 messages.removeAll { $0.id == pendingMessage.id }
                 messages.append(remoteMessage)
                 refresh(currentUserID: sender.id)
+                errorMessage = nil
+            } catch {
+                messages.removeAll { $0.id == pendingMessage.id }
+                errorMessage = error.localizedDescription
             }
         }
     }

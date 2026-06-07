@@ -27,15 +27,28 @@ actor SupabaseSessionStore {
 
     private var accessToken: String?
     private var userID: UUID?
+    private var refreshToken: String?
 
-    func update(accessToken: String?, userID: UUID?) {
+    func update(accessToken: String?, refreshToken: String? = nil, userID: UUID?) {
         self.accessToken = accessToken
+        self.refreshToken = refreshToken
         self.userID = userID
+        if let accessToken {
+            SecureSessionStore.save(value: accessToken, account: "accessToken")
+        }
+        if let refreshToken {
+            SecureSessionStore.save(value: refreshToken, account: "refreshToken")
+        }
+        if let userID {
+            SecureSessionStore.save(value: userID.uuidString, account: "userID")
+        }
     }
 
     func clear() {
         accessToken = nil
+        refreshToken = nil
         userID = nil
+        SecureSessionStore.clearSession()
     }
 
     func token() -> String? {
@@ -44,6 +57,16 @@ actor SupabaseSessionStore {
 
     func currentUserID() -> UUID? {
         userID
+    }
+
+    func restoreFromKeychain() -> (accessToken: String?, refreshToken: String?, userID: UUID?) {
+        let savedAccessToken = SecureSessionStore.read(account: "accessToken")
+        let savedRefreshToken = SecureSessionStore.read(account: "refreshToken")
+        let savedUserID = SecureSessionStore.read(account: "userID").flatMap(UUID.init(uuidString:))
+        accessToken = savedAccessToken
+        refreshToken = savedRefreshToken
+        userID = savedUserID
+        return (savedAccessToken, savedRefreshToken, savedUserID)
     }
 }
 
@@ -54,7 +77,7 @@ enum SupabaseClient {
         let payload = AuthRequest(email: email, password: password, data: ["username": username])
         let response: AuthResponse = try await request(path: "/auth/v1/signup", method: "POST", body: payload, authorized: false)
         guard let userID = response.user.id else { throw SupabaseError.invalidResponse }
-        await SupabaseSessionStore.shared.update(accessToken: response.accessToken, userID: userID)
+        await SupabaseSessionStore.shared.update(accessToken: response.accessToken, refreshToken: response.refreshToken, userID: userID)
         let profile = Profile.emptyRemote(id: userID, username: username, email: email)
         return try await upsertProfile(profile)
     }
@@ -63,8 +86,23 @@ enum SupabaseClient {
         let payload = AuthRequest(email: email, password: password, data: nil)
         let response: AuthResponse = try await request(path: "/auth/v1/token?grant_type=password", method: "POST", body: payload, authorized: false)
         guard let userID = response.user.id, let accessToken = response.accessToken else { throw SupabaseError.invalidResponse }
-        await SupabaseSessionStore.shared.update(accessToken: accessToken, userID: userID)
+        await SupabaseSessionStore.shared.update(accessToken: accessToken, refreshToken: response.refreshToken, userID: userID)
         return try await fetchProfile(id: userID)
+    }
+
+    static func restoreSession() async throws -> Profile? {
+        let saved = await SupabaseSessionStore.shared.restoreFromKeychain()
+        guard let userID = saved.userID else { return nil }
+        if saved.accessToken != nil {
+            if let profile = try? await fetchProfile(id: userID) {
+                return profile
+            }
+        }
+        guard let refreshToken = saved.refreshToken else { return nil }
+        let response: AuthResponse = try await request(path: "/auth/v1/token?grant_type=refresh_token", method: "POST", body: RefreshRequest(refreshToken: refreshToken), authorized: false)
+        guard let refreshedUserID = response.user.id, let accessToken = response.accessToken else { throw SupabaseError.invalidResponse }
+        await SupabaseSessionStore.shared.update(accessToken: accessToken, refreshToken: response.refreshToken ?? refreshToken, userID: refreshedUserID)
+        return try await fetchProfile(id: refreshedUserID)
     }
 
     static func signOut() async {
@@ -83,7 +121,11 @@ enum SupabaseClient {
     }
 
     static func upsertProfile(_ profile: Profile) async throws -> Profile {
-        let rows: [ProfileRow] = try await request(path: "/rest/v1/profiles?on_conflict=id", method: "POST", body: ProfileRow(profile), authorized: true, prefer: "resolution=merge-duplicates,return=representation")
+        var row = ProfileRow(profile)
+        if let data = profile.profilePhotoData {
+            row.profilePhotoUrl = try await uploadImages([data], bucket: "profile-photos", prefix: "profiles/\(profile.id.uuidString)").first?.absoluteString
+        }
+        let rows: [ProfileRow] = try await request(path: "/rest/v1/profiles?on_conflict=id", method: "POST", body: row, authorized: true, prefer: "resolution=merge-duplicates,return=representation")
         guard let profile = rows.first?.profile else { throw SupabaseError.invalidResponse }
         return profile
     }
@@ -169,6 +211,20 @@ enum SupabaseClient {
         let _: EmptyResponse = try await request(path: "/rest/v1/friend_requests?id=eq.\(friendRequest.id.uuidString)", method: "PATCH", body: ["status": FriendRequestStatus.rejected.rawValue], authorized: true)
     }
 
+    static func removeFriendship(with profileID: UUID) async throws {
+        guard let currentUserID = await SupabaseSessionStore.shared.currentUserID() else {
+            throw SupabaseError.missingSession
+        }
+        let _: EmptyResponse = try await request(path: "/rest/v1/friendships?user_id=eq.\(currentUserID.uuidString)&friend_id=eq.\(profileID.uuidString)", method: "DELETE", body: OptionalBody.none, authorized: true)
+        let _: EmptyResponse = try await request(path: "/rest/v1/friendships?user_id=eq.\(profileID.uuidString)&friend_id=eq.\(currentUserID.uuidString)", method: "DELETE", body: OptionalBody.none, authorized: true)
+        let _: EmptyResponse = try await request(
+            path: "/rest/v1/friend_requests?or=(and(sender_id.eq.\(currentUserID.uuidString),receiver_id.eq.\(profileID.uuidString)),and(sender_id.eq.\(profileID.uuidString),receiver_id.eq.\(currentUserID.uuidString)))",
+            method: "DELETE",
+            body: OptionalBody.none,
+            authorized: true
+        )
+    }
+
     static func fetchFriendships(currentUserID: UUID) async throws -> [UUID] {
         let rows: [FriendshipRow] = try await request(path: "/rest/v1/friendships?user_id=eq.\(currentUserID.uuidString)&select=friend_id", method: "GET", body: OptionalBody.none, authorized: true)
         return rows.map(\.friendId).filter { $0 != currentUserID }
@@ -222,13 +278,30 @@ enum SupabaseClient {
             let path = "\(prefix)-\(index).jpg"
             let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
             let uploadPath = "/storage/v1/object/\(bucket)/\(encodedPath)"
-            let _: EmptyResponse = try await request(path: uploadPath, method: "POST", rawBody: data, contentType: "image/jpeg", authorized: true, prefer: "return=minimal")
+            let _: EmptyResponse = try await request(
+                path: uploadPath,
+                method: "POST",
+                rawBody: data,
+                contentType: "image/jpeg",
+                authorized: true,
+                prefer: "return=minimal",
+                upsertStorageObject: true
+            )
             urls.append(SupabaseConfig.projectURL.appending(path: "/storage/v1/object/public/\(bucket)/\(path)"))
         }
         return urls
     }
 
     private static func directConversationID(senderID: UUID, receiverID: UUID) async throws -> UUID {
+        if let rows: [ConversationIDRow] = try? await request(
+            path: "/rest/v1/rpc/get_or_create_direct_conversation",
+            method: "POST",
+            body: DirectConversationRequest(otherUserID: receiverID),
+            authorized: true
+        ), let conversationID = rows.first?.getOrCreateDirectConversation {
+            return conversationID
+        }
+
         let userIDs = Array(Set([senderID, receiverID]))
         let memberRows: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?user_id=in.\(postgrestList(userIDs))&select=conversation_id,user_id", method: "GET", body: OptionalBody.none, authorized: true)
         let grouped = Dictionary(grouping: memberRows, by: \.conversationId)
@@ -269,7 +342,8 @@ enum SupabaseClient {
         rawBody: Data?,
         contentType: String,
         authorized: Bool,
-        prefer: String? = nil
+        prefer: String? = nil,
+        upsertStorageObject: Bool = false
     ) async throws -> Response {
         guard let url = URL(string: path, relativeTo: SupabaseConfig.projectURL) else { throw SupabaseError.invalidResponse }
         var request = URLRequest(url: url)
@@ -278,6 +352,9 @@ enum SupabaseClient {
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         if let prefer {
             request.setValue(prefer, forHTTPHeaderField: "Prefer")
+        }
+        if upsertStorageObject {
+            request.setValue("true", forHTTPHeaderField: "x-upsert")
         }
         if authorized, let token = await SupabaseSessionStore.shared.token() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -363,6 +440,10 @@ private struct AuthRequest: Encodable {
     let data: [String: String]?
 }
 
+private struct RefreshRequest: Encodable {
+    let refreshToken: String
+}
+
 private struct AuthResponse: Decodable {
     struct User: Decodable {
         let id: UUID?
@@ -370,6 +451,7 @@ private struct AuthResponse: Decodable {
     }
 
     let accessToken: String?
+    let refreshToken: String?
     let user: User
 }
 
@@ -614,6 +696,14 @@ private struct FriendshipRow: Codable {
 private struct ConversationRow: Codable {
     var id: UUID
     var title: String?
+}
+
+private struct DirectConversationRequest: Encodable {
+    var otherUserID: UUID
+}
+
+private struct ConversationIDRow: Decodable {
+    var getOrCreateDirectConversation: UUID
 }
 
 private struct ConversationMemberRow: Decodable {

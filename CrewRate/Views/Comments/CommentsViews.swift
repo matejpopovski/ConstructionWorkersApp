@@ -5,15 +5,19 @@ import UIKit
 struct CommentsView: View {
     @EnvironmentObject private var session: SessionViewModel
     let post: Post
+    var focusComposerOnAppear = false
     @State private var commentText = ""
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var selectedPhotoData: Data?
     @State private var photoErrorMessage: String?
+    @FocusState private var isCommentFieldFocused: Bool
 
     var body: some View {
         List {
             Section {
-                PostCardView(post: post)
+                PostCardView(post: post) {
+                    isCommentFieldFocused = true
+                }
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
             }
@@ -29,27 +33,38 @@ struct CommentsView: View {
             }
             Section("Add Comment") {
                 TextField("Write a comment", text: $commentText, axis: .vertical)
+                    .focused($isCommentFieldFocused)
                 ImagePicker(selectedItem: $selectedPhoto)
                 if let selectedPhotoData, let image = UIImage(data: selectedPhotoData) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
                         .frame(height: 140)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
                 }
                 if let photoErrorMessage {
                     ErrorView(message: photoErrorMessage)
                 }
                 Button("Comment") { addComment(parent: nil) }
+                    .buttonStyle(CrewPrimaryButtonStyle())
                     .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedPhotoData == nil)
             }
         }
         .navigationTitle("Discussion")
+        .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background(Color.crewCanvas)
         .refreshable {
             session.refreshRemoteData()
         }
         .onAppear {
             session.refreshRemoteData()
+            if focusComposerOnAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    isCommentFieldFocused = true
+                }
+            }
         }
         .onChange(of: selectedPhoto) { _, newItem in
             Task { await loadSelectedPhoto(newItem) }
@@ -94,7 +109,7 @@ struct CommentRowView: View {
     @State private var showingReport = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CrewDesign.Spacing.sm) {
             HStack(alignment: .top) {
                 ProfileImageView(profile: authorProfile, size: 34)
                 VStack(alignment: .leading, spacing: 4) {
@@ -116,33 +131,31 @@ struct CommentRowView: View {
                     .resizable()
                     .scaledToFill()
                     .frame(height: 140)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
             } else if let imageURL = comment.imageURLs.first {
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        Label("Photo unavailable", systemImage: "photo")
-                            .frame(maxWidth: .infinity, minHeight: 120)
-                            .background(Color.crewGray)
-                    default:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 120)
-                            .background(Color.crewGray)
-                    }
+                RemoteImage(url: imageURL) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .background(Color.crewGray)
+                } failure: {
+                    Label("Photo unavailable", systemImage: "photo")
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .background(Color.crewGray)
                 }
                 .frame(height: 140)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             HStack {
                 Button {
-                    session.likeService.toggleComment(comment, commentService: session.commentService)
+                    withAnimation(CrewDesign.standardAnimation) {
+                        session.likeService.toggleComment(comment, commentService: session.commentService)
+                    }
                 } label: {
-                    Label("\(comment.likeCount)", systemImage: session.likeService.isCommentLiked(comment) ? "heart.fill" : "heart")
-                        .foregroundStyle(session.likeService.isCommentLiked(comment) ? .red : Color.crewNavy)
+                    Label("\(liveComment.likeCount)", systemImage: session.likeService.isCommentLiked(liveComment) ? "heart.fill" : "heart")
+                        .foregroundStyle(session.likeService.isCommentLiked(liveComment) ? .red : Color.crewNavy)
                 }
                 Button {
                     showingReply.toggle()
@@ -152,10 +165,18 @@ struct CommentRowView: View {
             }
             .buttonStyle(.borderless)
             if showingReply {
-                HStack {
+                HStack(spacing: CrewDesign.Spacing.xs) {
                     TextField("@\(comment.authorUsername)", text: $replyText)
-                    Button("Send") { addReply() }
+                        .padding(.horizontal, CrewDesign.Spacing.sm)
+                        .frame(minHeight: CrewDesign.Size.compactControlHeight)
+                        .background(Color.crewGray)
+                        .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
+                    Button { addReply() } label: {
+                        Image(systemName: "paperplane.fill")
+                    }
+                    .buttonStyle(CrewIconButtonStyle())
                 }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
             ForEach(session.commentService.replies(to: comment).filter { !session.moderationService.isBlocked($0.userID) }) { reply in
                 ReplyRowView(reply: reply, parentUsername: comment.authorUsername)
@@ -184,6 +205,10 @@ struct CommentRowView: View {
     private var authorProfile: Profile? {
         session.profileService.profiles.first { $0.id == comment.userID }
     }
+
+    private var liveComment: Comment {
+        session.commentService.comments.first(where: { $0.id == comment.id }) ?? comment
+    }
 }
 
 struct ReplyRowView: View {
@@ -199,11 +224,13 @@ struct ReplyRowView: View {
                     Text(reply.authorUsername).font(.caption.bold())
                     Text("@\(parentUsername)").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button {
-                        session.likeService.toggleComment(reply, commentService: session.commentService)
+                Button {
+                        withAnimation(CrewDesign.standardAnimation) {
+                            session.likeService.toggleComment(reply, commentService: session.commentService)
+                        }
                     } label: {
-                        Label("\(reply.likeCount)", systemImage: session.likeService.isCommentLiked(reply) ? "heart.fill" : "heart")
-                            .foregroundStyle(session.likeService.isCommentLiked(reply) ? .red : Color.crewNavy)
+                        Label("\(liveReply.likeCount)", systemImage: session.likeService.isCommentLiked(liveReply) ? "heart.fill" : "heart")
+                            .foregroundStyle(session.likeService.isCommentLiked(liveReply) ? .red : Color.crewNavy)
                     }
                     .buttonStyle(.borderless)
                 }
@@ -212,5 +239,9 @@ struct ReplyRowView: View {
             }
         }
         .padding(.leading, 28)
+    }
+
+    private var liveReply: Comment {
+        session.commentService.comments.first(where: { $0.id == reply.id }) ?? reply
     }
 }

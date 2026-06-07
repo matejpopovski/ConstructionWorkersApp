@@ -7,35 +7,45 @@ struct AuthView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
+            ScrollView {
+                VStack(spacing: CrewDesign.Spacing.xl) {
+                    Spacer(minLength: CrewDesign.Spacing.xxl)
                 Image("BrandLogo")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 96, height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                VStack(spacing: 8) {
+                        .frame(width: 108, height: 108)
+                        .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.large, style: .continuous))
+                        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+                VStack(spacing: CrewDesign.Spacing.xs) {
                     Text("Construction Gossip")
                         .font(.largeTitle.bold())
                     Text("Connect with workers, compare job experiences, and build your crew.")
-                        .font(.body)
+                            .font(.subheadline)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
+                            .frame(maxWidth: 320)
                 }
                 Picker("Mode", selection: $mode) {
                     Text("Login").tag(AuthMode.login)
                     Text("Sign Up").tag(AuthMode.signUp)
                 }
                 .pickerStyle(.segmented)
+                    .padding(CrewDesign.Spacing.xxs)
+                    .background(Color.crewGray)
+                    .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
                 if mode == .login {
                     LoginView()
                 } else {
                     SignUpView()
                 }
-                Spacer()
+                    Spacer(minLength: CrewDesign.Spacing.xl)
+                }
+                .padding(.horizontal, CrewDesign.Spacing.lg)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
             }
-            .padding()
-            .background(Color(.systemGroupedBackground))
+            .crewScreenBackground()
+            .animation(.easeInOut(duration: 0.2), value: mode)
         }
     }
 }
@@ -51,15 +61,16 @@ struct LoginView: View {
     @State private var password = ""
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: CrewDesign.Spacing.sm) {
             TextInputField(title: "Email", text: $email)
                 .keyboardType(.emailAddress)
                 .textContentType(.emailAddress)
             SecureField("Password", text: $password)
                 .textContentType(.password)
-                .padding(12)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, CrewDesign.Spacing.md)
+                .frame(minHeight: CrewDesign.Size.controlHeight)
+                .background(Color.crewGray)
+                .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
             if let error = session.errorMessage {
                 ErrorView(message: error)
             }
@@ -67,6 +78,7 @@ struct LoginView: View {
                 Task { await session.login(email: email, password: password) }
             }
         }
+        .crewCard()
     }
 }
 
@@ -80,7 +92,7 @@ struct SignUpView: View {
 
     var body: some View {
         if acceptedTerms {
-            VStack(spacing: 12) {
+            VStack(spacing: CrewDesign.Spacing.sm) {
                 TextInputField(title: "Username", text: $username)
                     .keyboardType(.asciiCapable)
                     .textContentType(.username)
@@ -89,9 +101,10 @@ struct SignUpView: View {
                     .textContentType(.emailAddress)
                 SecureField("Password", text: $password)
                     .textContentType(.newPassword)
-                    .padding(12)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal, CrewDesign.Spacing.md)
+                    .frame(minHeight: CrewDesign.Size.controlHeight)
+                    .background(Color.crewGray)
+                    .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
                 if let validationMessage {
                     ErrorView(message: validationMessage)
                 }
@@ -104,10 +117,12 @@ struct SignUpView: View {
                 .disabled(!isValid)
                 .opacity(isValid ? 1 : 0.55)
             }
+            .crewCard()
         } else {
             TermsAgreementView {
                 acceptedTerms = true
             }
+            .crewCard()
         }
     }
 
@@ -177,6 +192,9 @@ struct OnboardingProfileView: View {
                 }
             }
             .navigationTitle("Set Up Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Color.crewCanvas)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {

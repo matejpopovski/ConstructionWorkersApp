@@ -4,6 +4,7 @@ struct SettingsPrivacyView: View {
     @EnvironmentObject private var session: SessionViewModel
     @State private var profile = DemoData.currentUser
     @State private var showingDeleteAccount = false
+    @State private var showingSignOut = false
 
     var body: some View {
         Form {
@@ -27,10 +28,10 @@ struct SettingsPrivacyView: View {
             }
             Section {
                 Button("Save Privacy Settings") {
-                    session.updateCurrentProfile(profile)
+                    Task { try? await session.updateCurrentProfile(profile) }
                 }
                 Button("Sign Out", role: .destructive) {
-                    session.signOut()
+                    showingSignOut = true
                 }
                 Button("Delete Account", role: .destructive) {
                     showingDeleteAccount = true
@@ -38,13 +39,24 @@ struct SettingsPrivacyView: View {
             }
         }
         .navigationTitle("Privacy")
+        .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background(Color.crewCanvas)
         .confirmationDialog("Delete your account?", isPresented: $showingDeleteAccount, titleVisibility: .visible) {
             Button("Delete Account", role: .destructive) {
                 session.deleteCurrentAccount()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes your local account, profile, posts, comments, messages, and connection data from this device.")
+            Text("This permanently removes your profile and associated app data. This action cannot be undone.")
+        }
+        .confirmationDialog("Sign out?", isPresented: $showingSignOut, titleVisibility: .visible) {
+            Button("Sign Out", role: .destructive) {
+                session.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to sign out of Construction Gossip?")
         }
         .onAppear {
             profile = session.currentProfile ?? DemoData.currentUser

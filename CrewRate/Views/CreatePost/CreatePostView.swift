@@ -39,7 +39,8 @@ struct CreatePostView: View {
                             .resizable()
                             .scaledToFill()
                             .frame(height: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
                             .overlay(alignment: .topTrailing) {
                                 Button {
                                     selectedPhoto = nil
@@ -104,6 +105,9 @@ struct CreatePostView: View {
                     }
             }
             .navigationTitle("Create Review")
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Color.crewCanvas)
             .onChange(of: selectedPhoto) { _, newItem in
                 Task { await loadSelectedPhoto(newItem) }
             }
@@ -115,7 +119,7 @@ struct CreatePostView: View {
                         .padding(.vertical, 16)
                         .background(Color.crewOrange)
                         .foregroundStyle(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
                         .shadow(radius: 12)
                         .transition(.scale.combined(with: .opacity))
                 }
