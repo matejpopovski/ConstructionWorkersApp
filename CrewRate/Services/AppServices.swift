@@ -213,13 +213,13 @@ final class AuthService: ObservableObject {
         Task { await SupabaseClient.signOut() }
     }
 
-    func deleteAccount(profileID: UUID) {
+    func deleteAccount(profileID: UUID) async throws {
+        try await SupabaseClient.deleteAccount()
         accounts.removeAll { $0.id == profileID }
         LocalStore.saveAccounts(accounts)
         if currentProfile?.id == profileID {
             currentProfile = nil
         }
-        Task { try? await SupabaseClient.deleteAccount() }
     }
 }
 
@@ -408,6 +408,12 @@ final class CommentService: ObservableObject {
                 comments[index] = merged
             }
         }
+    }
+
+    func delete(_ comment: Comment, currentUserID: UUID) {
+        guard comment.userID == currentUserID else { return }
+        comments.removeAll { $0.id == comment.id || $0.parentCommentID == comment.id }
+        Task { try? await SupabaseClient.deleteComment(comment) }
     }
 
     func deleteComments(by userID: UUID) {
@@ -638,6 +644,7 @@ final class MessageService: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var sendingProfileIDs: Set<UUID> = []
     @Published private(set) var lastReadAtByProfileID: [UUID: Date] = [:]
+    private var isRefreshing = false
     @Published var messages: [ChatMessage] {
         didSet { LocalStore.saveMessages(messages) }
     }
@@ -647,14 +654,21 @@ final class MessageService: ObservableObject {
     }
 
     func refresh(currentUserID: UUID?) {
-        guard let currentUserID else { return }
+        guard let currentUserID, !isRefreshing else { return }
+        isRefreshing = true
         Task {
-            guard let snapshot = try? await SupabaseClient.fetchMessages(currentUserID: currentUserID) else { return }
-            messages = (messages + snapshot.messages)
-                .uniquedByMessageID()
-                .sorted { $0.createdAt < $1.createdAt }
-            lastReadAtByProfileID.merge(snapshot.lastReadAtByProfileID) { local, remote in
-                max(local, remote)
+            defer { isRefreshing = false }
+            do {
+                let snapshot = try await SupabaseClient.fetchMessages(currentUserID: currentUserID)
+                messages = (messages + snapshot.messages)
+                    .uniquedByMessageID()
+                    .sorted { $0.createdAt < $1.createdAt }
+                lastReadAtByProfileID.merge(snapshot.lastReadAtByProfileID) { local, remote in
+                    max(local, remote)
+                }
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
     }
@@ -675,6 +689,18 @@ final class MessageService: ObservableObject {
         let lastReadAt = lastReadAtByProfileID[friendID] ?? .distantPast
         return thread(currentUserID: currentUserID, friendID: friendID)
             .filter { $0.senderID == friendID && $0.createdAt > lastReadAt }
+            .count
+    }
+
+    func totalUnreadCount(currentUserID: UUID?) -> Int {
+        guard let currentUserID else { return 0 }
+        return messages
+            .filter { message in
+                guard message.receiverID == currentUserID,
+                      message.senderID != currentUserID else { return false }
+                let lastReadAt = lastReadAtByProfileID[message.senderID] ?? .distantPast
+                return message.createdAt > lastReadAt
+            }
             .count
     }
 
@@ -761,6 +787,13 @@ final class ModerationService: ObservableObject {
         Task { try? await SupabaseClient.report(report) }
     }
 
+    func reportProfile(_ profile: Profile, reporterID: UUID?, reason: String) {
+        guard let reporterID, reporterID != profile.id else { return }
+        let report = Report(id: UUID(), reporterID: reporterID, targetType: "profile", targetID: profile.id, reason: reason, createdAt: .now)
+        reports.append(report)
+        Task { try? await SupabaseClient.report(report) }
+    }
+
     func blockUser(_ profile: Profile, currentUserID: UUID?) {
         guard profile.id != currentUserID else { return }
         blockedUserIDs.insert(profile.id)
@@ -769,6 +802,7 @@ final class ModerationService: ObservableObject {
 
     func unblockUser(_ profile: Profile) {
         blockedUserIDs.remove(profile.id)
+        Task { try? await SupabaseClient.unblock(userID: profile.id) }
     }
 
     func isBlocked(_ userID: UUID) -> Bool {

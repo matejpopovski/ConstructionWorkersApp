@@ -6,6 +6,7 @@ struct PublicProfileView: View {
     @EnvironmentObject private var session: SessionViewModel
     let profile: Profile?
     @State private var showingUnfollowConfirmation = false
+    @State private var showingReport = false
 
     private var shownProfile: Profile {
         profile ?? session.currentProfile ?? DemoData.currentUser
@@ -77,6 +78,17 @@ struct PublicProfileView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Their reviews will no longer be prioritized in your crew feed.")
+            }
+            .confirmationDialog("Report @\(shownProfile.username)", isPresented: $showingReport) {
+                Button("Harassment or hate speech", role: .destructive) {
+                    session.moderationService.reportProfile(shownProfile, reporterID: session.currentProfile?.id, reason: "harassment")
+                }
+                Button("Impersonation or false identity", role: .destructive) {
+                    session.moderationService.reportProfile(shownProfile, reporterID: session.currentProfile?.id, reason: "impersonation")
+                }
+                Button("Private personal information", role: .destructive) {
+                    session.moderationService.reportProfile(shownProfile, reporterID: session.currentProfile?.id, reason: "private_info")
+                }
             }
         }
     }
@@ -217,6 +229,9 @@ struct PublicProfileView: View {
                             session.moderationService.blockUser(shownProfile, currentUserID: session.currentProfile?.id)
                             session.friendService.remove(shownProfile)
                         }
+                    }
+                    Button("Report Profile", systemImage: "flag", role: .destructive) {
+                        showingReport = true
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -392,13 +407,6 @@ struct EditProfileView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Section("Private") {
-                TextField("Street address private only", text: optionalBinding(\.streetAddressPrivateOnly))
-                    .textContentType(.fullStreetAddress)
-                Text("Street address is stored for private account use only and is never shown publicly.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
             Section {
                 Button {
                     saveProfile()
@@ -489,7 +497,11 @@ struct ChatView: View {
                                 .padding(.top, 80)
                         } else {
                             ForEach(visibleMessages) { message in
-                                ChatBubble(message: message, isMine: message.senderID == session.currentProfile?.id)
+                                ChatBubble(
+                                    message: message,
+                                    isMine: message.senderID == session.currentProfile?.id,
+                                    senderProfile: profile
+                                )
                                     .id(message.id)
                             }
                         }
@@ -565,8 +577,23 @@ struct ChatView: View {
             .padding(.vertical, CrewDesign.Spacing.xs)
             .background(.bar)
         }
-        .navigationTitle(profile.username)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: CrewDesign.Spacing.xs) {
+                    NavigationLink {
+                        PublicProfileView(profile: profile)
+                    } label: {
+                        ProfileImageView(profile: profile, size: 30)
+                    }
+                    .buttonStyle(CrewPressButtonStyle())
+                    .accessibilityLabel("Open \(profile.username)'s profile")
+                    Text(profile.username)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+            }
+        }
         .onAppear {
             session.messageService.clearError()
             session.messageService.refresh(currentUserID: session.currentProfile?.id)
@@ -574,7 +601,11 @@ struct ChatView: View {
         }
         .task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
+                do {
+                    try await Task.sleep(for: .seconds(3))
+                } catch {
+                    return
+                }
                 session.messageService.refresh(currentUserID: session.currentProfile?.id)
             }
         }
@@ -642,10 +673,15 @@ struct ChatBubble: View {
     @EnvironmentObject private var session: SessionViewModel
     let message: ChatMessage
     let isMine: Bool
+    let senderProfile: Profile
 
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: CrewDesign.Spacing.xs) {
             if isMine { Spacer(minLength: 40) }
+            if !isMine {
+                ProfileImageView(profile: senderProfile, size: 30)
+                    .padding(.bottom, 2)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 if let sharedPostID = message.sharedPostID {
                     if let post = session.postService.posts.first(where: { $0.id == sharedPostID }) {

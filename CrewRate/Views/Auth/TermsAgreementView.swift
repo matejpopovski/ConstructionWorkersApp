@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct TermsAgreementView: View {
-    let onAgree: () -> Void
+    var onAgree: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: CrewDesign.Spacing.md) {
@@ -32,7 +32,9 @@ struct TermsAgreementView: View {
             .background(Color.crewGray)
             .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
 
-            PrimaryButton("Agree and Continue", systemImage: "checkmark.circle.fill", action: onAgree)
+            if let onAgree {
+                PrimaryButton("Agree and Continue", systemImage: "checkmark.circle.fill", action: onAgree)
+            }
         }
     }
 }
@@ -69,7 +71,7 @@ private enum TermsOfUse {
         ),
         TermsSection(
             title: "6. Prohibited Content",
-            body: "You may not post harassment, bullying, threats, stalking, hate speech, private personal information, false factual claims about people or companies, sexual exploitation, graphic violence, illegal instructions, spam, scams, phishing, deceptive promotions, copyrighted material without permission, or content that violates Apple App Store or Google Play policies."
+            body: "You may not post harassment, bullying, threats, stalking, hate speech, private personal information, false factual claims about people or companies, sexual exploitation, graphic violence, illegal instructions, spam, scams, phishing, deceptive promotions, copyrighted material without permission, or content that violates applicable law or App Store policies."
         ),
         TermsSection(
             title: "7. Privacy",
@@ -81,7 +83,7 @@ private enum TermsOfUse {
         ),
         TermsSection(
             title: "9. Payments and Purchases",
-            body: "Some features may require payment, subscription, or in-app purchase. Prices, billing periods, renewal terms, cancellation methods, and refund rules will be shown before purchase where required. Purchases through Apple, Google, or another third-party app store may also be governed by that third party's terms."
+            body: "Construction Gossip currently has no paid features, subscriptions, or in-app purchases. If paid digital features are added later, required pricing, renewal, cancellation, and Apple in-app purchase disclosures will be shown before purchase."
         ),
         TermsSection(
             title: "10. Intellectual Property",
@@ -121,7 +123,7 @@ private enum TermsOfUse {
         ),
         TermsSection(
             title: "19. App Store Terms",
-            body: "If you downloaded the Service from the Apple App Store, Google Play Store, or another app marketplace, you also agree to comply with that marketplace's applicable terms, rules, and policies."
+            body: "If you downloaded the Service from the Apple App Store, you also agree to comply with Apple's applicable terms, rules, and policies."
         ),
         TermsSection(
             title: "20. Copyright Complaints",

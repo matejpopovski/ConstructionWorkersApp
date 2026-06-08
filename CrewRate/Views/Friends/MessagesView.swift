@@ -75,7 +75,11 @@ struct MessagesView: View {
             }
             .task {
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(3))
+                    do {
+                        try await Task.sleep(for: .seconds(3))
+                    } catch {
+                        return
+                    }
                     session.messageService.refresh(currentUserID: session.currentProfile?.id)
                 }
             }

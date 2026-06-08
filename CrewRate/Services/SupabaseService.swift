@@ -55,6 +55,10 @@ actor SupabaseSessionStore {
         accessToken
     }
 
+    func savedRefreshToken() -> String? {
+        refreshToken
+    }
+
     func currentUserID() -> UUID? {
         userID
     }
@@ -67,6 +71,22 @@ actor SupabaseSessionStore {
         refreshToken = savedRefreshToken
         userID = savedUserID
         return (savedAccessToken, savedRefreshToken, savedUserID)
+    }
+}
+
+private actor SupabaseTokenRefreshCoordinator {
+    static let shared = SupabaseTokenRefreshCoordinator()
+    private var activeRefresh: Task<Bool, Never>?
+
+    func refresh(using operation: @escaping @Sendable () async -> Bool) async -> Bool {
+        if let activeRefresh {
+            return await activeRefresh.value
+        }
+        let task = Task { await operation() }
+        activeRefresh = task
+        let succeeded = await task.value
+        activeRefresh = nil
+        return succeeded
     }
 }
 
@@ -90,6 +110,38 @@ enum SupabaseClient {
         return try await fetchProfile(id: userID)
     }
 
+    static func requestPasswordRecovery(email: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/auth/v1/recover?redirect_to=constructiongossip%3A%2F%2Fauth%2Freset-password",
+            method: "POST",
+            body: PasswordRecoveryRequest(email: email),
+            authorized: false
+        )
+    }
+
+    static func verifyPasswordRecoveryCode(email: String, code: String) async throws -> String {
+        let response: AuthResponse = try await request(
+            path: "/auth/v1/verify",
+            method: "POST",
+            body: PasswordRecoveryVerificationRequest(email: email, token: code, type: "recovery"),
+            authorized: false
+        )
+        guard let accessToken = response.accessToken else {
+            throw SupabaseError.invalidResponse
+        }
+        return accessToken
+    }
+
+    static func updatePassword(_ password: String, recoveryAccessToken: String) async throws {
+        let _: AuthUserResponse = try await request(
+            path: "/auth/v1/user",
+            method: "PUT",
+            body: PasswordUpdateRequest(password: password),
+            authorized: false,
+            bearerToken: recoveryAccessToken
+        )
+    }
+
     static func restoreSession() async throws -> Profile? {
         let saved = await SupabaseSessionStore.shared.restoreFromKeychain()
         guard let userID = saved.userID else { return nil }
@@ -110,7 +162,7 @@ enum SupabaseClient {
     }
 
     static func fetchProfiles() async throws -> [Profile] {
-        let rows: [ProfileRow] = try await request(path: "/rest/v1/profiles?select=*&order=username.asc", method: "GET", body: OptionalBody.none, authorized: false)
+        let rows: [ProfileRow] = try await request(path: "/rest/v1/profiles?select=*&order=username.asc", method: "GET", body: OptionalBody.none, authorized: true)
         return rows.map(\.profile)
     }
 
@@ -162,6 +214,15 @@ enum SupabaseClient {
         let rows: [CommentRow] = try await request(path: "/rest/v1/comments", method: "POST", body: row, authorized: true, prefer: "return=representation")
         guard let created = rows.first?.comment else { throw SupabaseError.invalidResponse }
         return created
+    }
+
+    static func deleteComment(_ comment: Comment) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/rest/v1/comments?id=eq.\(comment.id.uuidString)",
+            method: "DELETE",
+            body: OptionalBody.none,
+            authorized: true
+        )
     }
 
     static func fetchLikes() async throws -> [LikeRow] {
@@ -282,10 +343,39 @@ enum SupabaseClient {
         let _: EmptyResponse = try await request(path: "/rest/v1/blocked_users", method: "POST", body: BlockedUserRow(blockerID: blockerID, blockedID: userID), authorized: true)
     }
 
+    static func unblock(userID: UUID) async throws {
+        guard let blockerID = await SupabaseSessionStore.shared.currentUserID() else { throw SupabaseError.missingSession }
+        let _: EmptyResponse = try await request(
+            path: "/rest/v1/blocked_users?blocker_id=eq.\(blockerID.uuidString)&blocked_id=eq.\(userID.uuidString)",
+            method: "DELETE",
+            body: OptionalBody.none,
+            authorized: true
+        )
+    }
+
     static func deleteAccount() async throws {
-        guard let userID = await SupabaseSessionStore.shared.currentUserID() else { throw SupabaseError.missingSession }
-        let _: EmptyResponse = try await request(path: "/rest/v1/profiles?id=eq.\(userID.uuidString)", method: "DELETE", body: OptionalBody.none, authorized: true)
+        let _: EmptyResponse = try await request(
+            path: "/rest/v1/rpc/delete_current_account",
+            method: "POST",
+            body: OptionalBody.none,
+            authorized: true
+        )
         await SupabaseSessionStore.shared.clear()
+    }
+
+    static func deleteOwnedMedia(urls: [URL]) async throws {
+        for url in Set(urls) {
+            let marker = "/storage/v1/object/public/"
+            guard let range = url.path.range(of: marker) else { continue }
+            let objectPath = String(url.path[range.upperBound...])
+            let encodedPath = objectPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? objectPath
+            let _: EmptyResponse = try await request(
+                path: "/storage/v1/object/\(encodedPath)",
+                method: "DELETE",
+                body: OptionalBody.none,
+                authorized: true
+            )
+        }
     }
 
     private static func uploadImages(_ images: [Data], bucket: String, prefix: String) async throws -> [URL] {
@@ -330,10 +420,19 @@ enum SupabaseClient {
         method: String,
         body: Body,
         authorized: Bool,
-        prefer: String? = nil
+        prefer: String? = nil,
+        bearerToken: String? = nil
     ) async throws -> Response {
         let data = body is OptionalBody ? nil : try encoder.encode(body)
-        return try await request(path: path, method: method, rawBody: data, contentType: "application/json", authorized: authorized, prefer: prefer)
+        return try await request(
+            path: path,
+            method: method,
+            rawBody: data,
+            contentType: "application/json",
+            authorized: authorized,
+            prefer: prefer,
+            bearerToken: bearerToken
+        )
     }
 
     private static func request<Response: Decodable>(
@@ -343,7 +442,9 @@ enum SupabaseClient {
         contentType: String,
         authorized: Bool,
         prefer: String? = nil,
-        upsertStorageObject: Bool = false
+        upsertStorageObject: Bool = false,
+        retryAfterRefreshingSession: Bool = true,
+        bearerToken: String? = nil
     ) async throws -> Response {
         guard let url = URL(string: path, relativeTo: SupabaseConfig.projectURL) else { throw SupabaseError.invalidResponse }
         var request = URLRequest(url: url)
@@ -356,7 +457,9 @@ enum SupabaseClient {
         if upsertStorageObject {
             request.setValue("true", forHTTPHeaderField: "x-upsert")
         }
-        if authorized, let token = await SupabaseSessionStore.shared.token() {
+        if let bearerToken {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        } else if authorized, let token = await SupabaseSessionStore.shared.token() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         } else {
             request.setValue("Bearer \(SupabaseConfig.publishableKey)", forHTTPHeaderField: "Authorization")
@@ -365,6 +468,22 @@ enum SupabaseClient {
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw SupabaseError.invalidResponse }
+        if httpResponse.statusCode == 401,
+           authorized,
+           retryAfterRefreshingSession,
+           await refreshAccessToken() {
+            return try await self.request(
+                path: path,
+                method: method,
+                rawBody: rawBody,
+                contentType: contentType,
+                authorized: authorized,
+                prefer: prefer,
+                upsertStorageObject: upsertStorageObject,
+                retryAfterRefreshingSession: false,
+                bearerToken: bearerToken
+            )
+        }
         guard 200..<300 ~= httpResponse.statusCode else {
             throw SupabaseError.requestFailed(errorMessage(from: data) ?? "Request failed with status \(httpResponse.statusCode).")
         }
@@ -372,6 +491,38 @@ enum SupabaseClient {
             return EmptyResponse() as! Response
         }
         return try decoder.decode(Response.self, from: data)
+    }
+
+    private static func refreshAccessToken() async -> Bool {
+        await SupabaseTokenRefreshCoordinator.shared.refresh {
+            await performAccessTokenRefresh()
+        }
+    }
+
+    private static func performAccessTokenRefresh() async -> Bool {
+        guard let refreshToken = await SupabaseSessionStore.shared.savedRefreshToken() else {
+            return false
+        }
+        do {
+            let response: AuthResponse = try await request(
+                path: "/auth/v1/token?grant_type=refresh_token",
+                method: "POST",
+                body: RefreshRequest(refreshToken: refreshToken),
+                authorized: false
+            )
+            guard let userID = response.user.id,
+                  let accessToken = response.accessToken else {
+                return false
+            }
+            await SupabaseSessionStore.shared.update(
+                accessToken: accessToken,
+                refreshToken: response.refreshToken ?? refreshToken,
+                userID: userID
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func errorMessage(from data: Data) -> String? {
@@ -444,6 +595,25 @@ private struct RefreshRequest: Encodable {
     let refreshToken: String
 }
 
+private struct PasswordRecoveryRequest: Encodable {
+    let email: String
+}
+
+private struct PasswordRecoveryVerificationRequest: Encodable {
+    let email: String
+    let token: String
+    let type: String
+}
+
+private struct PasswordUpdateRequest: Encodable {
+    let password: String
+}
+
+private struct AuthUserResponse: Decodable {
+    let id: UUID?
+    let email: String?
+}
+
 private struct AuthResponse: Decodable {
     struct User: Decodable {
         let id: UUID?
@@ -463,7 +633,6 @@ private struct ProfileRow: Codable {
     var profilePhotoUrl: String?
     var state: String?
     var city: String?
-    var streetAddressPrivateOnly: String?
     var tradePosition: String?
     var customTradePosition: String?
     var experienceLevel: String?
@@ -495,7 +664,6 @@ private struct ProfileRow: Codable {
         profilePhotoUrl = profile.profilePhotoURL?.absoluteString
         state = profile.state
         city = profile.city
-        streetAddressPrivateOnly = profile.streetAddressPrivateOnly
         tradePosition = profile.tradePosition?.rawValue
         customTradePosition = profile.customTradePosition
         experienceLevel = profile.experienceLevel
@@ -531,7 +699,7 @@ private struct ProfileRow: Codable {
             profilePhotoData: nil,
             state: state,
             city: city,
-            streetAddressPrivateOnly: streetAddressPrivateOnly,
+            streetAddressPrivateOnly: nil,
             tradePosition: tradePosition.flatMap(TradePosition.init(rawValue:)),
             customTradePosition: customTradePosition,
             experienceLevel: experienceLevel,

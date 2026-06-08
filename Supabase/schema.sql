@@ -34,7 +34,6 @@ create table public.profiles (
   profile_photo_url text,
   state text,
   city text,
-  street_address_private_only text,
   trade_position text,
   custom_trade_position text,
   experience_level text,
@@ -223,7 +222,7 @@ grant usage on type public.friend_request_status to anon, authenticated;
 grant usage on type public.message_visibility to anon, authenticated;
 grant usage on type public.report_target_type to anon, authenticated;
 
-grant select on public.profiles to anon, authenticated;
+grant select on public.profiles to authenticated;
 grant select on public.posts to anon, authenticated;
 grant select on public.comments to anon, authenticated;
 grant select on public.likes to anon, authenticated;
@@ -354,7 +353,8 @@ $$;
 revoke all on function public.mark_direct_conversation_read(uuid) from public;
 grant execute on function public.mark_direct_conversation_read(uuid) to authenticated;
 
-create policy "profiles are readable" on public.profiles for select using (true);
+create policy "profiles are readable to signed-in users" on public.profiles
+for select to authenticated using (true);
 create policy "users insert own profile" on public.profiles for insert with check (auth.uid() = id);
 create policy "users update own profile" on public.profiles for update using (auth.uid() = id) with check (auth.uid() = id);
 
@@ -388,6 +388,29 @@ create policy "users view own blocks" on public.blocked_users for select using (
 create policy "users create own blocks" on public.blocked_users for insert with check (auth.uid() = blocker_id);
 create policy "users delete own blocks" on public.blocked_users for delete using (auth.uid() = blocker_id);
 
+create or replace function public.delete_current_account()
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  delete from auth.users where id = current_user_id;
+  if not found then
+    raise exception 'Account not found';
+  end if;
+end;
+$$;
+
+revoke all on function public.delete_current_account() from public;
+grant execute on function public.delete_current_account() to authenticated;
+
 create policy "members view conversations" on public.conversations for select using (
   public.is_conversation_member(id)
 );
@@ -419,3 +442,21 @@ create policy "authenticated users upload profile photos" on storage.objects for
 create policy "authenticated users upload post images" on storage.objects for insert to authenticated with check (bucket_id = 'post-images');
 create policy "authenticated users upload comment images" on storage.objects for insert to authenticated with check (bucket_id = 'comment-images');
 create policy "authenticated users upload message images" on storage.objects for insert to authenticated with check (bucket_id = 'message-images');
+
+create policy "owners update uploaded images" on storage.objects
+for update to authenticated
+using (
+  bucket_id in ('profile-photos', 'post-images', 'comment-images', 'message-images')
+  and owner_id = auth.uid()::text
+)
+with check (
+  bucket_id in ('profile-photos', 'post-images', 'comment-images', 'message-images')
+  and owner_id = auth.uid()::text
+);
+
+create policy "owners delete uploaded images" on storage.objects
+for delete to authenticated
+using (
+  bucket_id in ('profile-photos', 'post-images', 'comment-images', 'message-images')
+  and owner_id = auth.uid()::text
+);

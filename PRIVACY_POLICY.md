@@ -20,7 +20,7 @@ Posts, comments, profile fields, and photos may be visible to other users depend
 
 ## Private Information
 
-Street address and similar private account fields are not shown publicly in the app UI. Users should not post private personal information about themselves or others in public posts, comments, profile text, or messages.
+The app does not request a street address, phone number, Social Security number, contacts, or precise location. Users should not post private personal information about themselves or others in reviews, comments, profile text, or messages.
 
 ## Sharing
 
@@ -32,7 +32,7 @@ Users can report posts and comments and can block other users. Reports and block
 
 ## Account Deletion
 
-Users can request account deletion from inside the app. In the local build, account deletion removes local account, profile, posts, comments, messages, and connection data from the device. In production, deletion should also remove or anonymize server-side data according to the production retention policy and legal requirements.
+Users can permanently delete their account from inside the app. Deletion removes the authentication account and associated database records. The app also requests removal of media files owned by that account before deleting it.
 
 ## Data Security
 

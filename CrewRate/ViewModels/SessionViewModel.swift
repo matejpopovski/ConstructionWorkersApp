@@ -8,6 +8,7 @@ final class SessionViewModel: ObservableObject {
     @Published var needsOnboarding = false
     @Published var errorMessage: String?
     @Published var pendingPostID: UUID?
+    @Published private(set) var passwordRecoveryAccessToken: String?
     @Published private(set) var notificationsReadAt = Date.distantPast
 
     let authService = AuthService()
@@ -61,6 +62,44 @@ final class SessionViewModel: ObservableObject {
         }
     }
 
+    func requestPasswordRecovery(email: String) async throws {
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedEmail.contains("@"), normalizedEmail.contains(".") else {
+            throw PasswordRecoveryError.invalidEmail
+        }
+        try await SupabaseClient.requestPasswordRecovery(email: normalizedEmail)
+    }
+
+    func verifyPasswordRecoveryCode(email: String, code: String) async throws {
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (6...8).contains(normalizedCode.count), normalizedCode.allSatisfy(\.isNumber) else {
+            throw PasswordRecoveryError.invalidCode
+        }
+        passwordRecoveryAccessToken = try await SupabaseClient.verifyPasswordRecoveryCode(
+            email: normalizedEmail,
+            code: normalizedCode
+        )
+    }
+
+    func updateRecoveredPassword(_ password: String) async throws {
+        guard let passwordRecoveryAccessToken else {
+            throw PasswordRecoveryError.expiredLink
+        }
+        guard password.count >= 8 else {
+            throw PasswordRecoveryError.weakPassword
+        }
+        try await SupabaseClient.updatePassword(password, recoveryAccessToken: passwordRecoveryAccessToken)
+        await SupabaseClient.signOut()
+        currentProfile = nil
+        isAuthenticated = false
+        needsOnboarding = false
+    }
+
+    func cancelPasswordRecovery() {
+        passwordRecoveryAccessToken = nil
+    }
+
     func restoreSession() async {
         do {
             guard let profile = try await authService.restoreSession() else { return }
@@ -99,9 +138,11 @@ final class SessionViewModel: ObservableObject {
         pendingPostID = nil
     }
 
-    func deleteCurrentAccount() {
+    func deleteCurrentAccount() async throws {
         guard let profileID = currentProfile?.id else { return }
-        authService.deleteAccount(profileID: profileID)
+        let mediaURLs = accountMediaURLs(for: profileID)
+        try? await SupabaseClient.deleteOwnedMedia(urls: mediaURLs)
+        try await authService.deleteAccount(profileID: profileID)
         profileService.remove(profileID: profileID)
         postService.deletePosts(by: profileID)
         commentService.deleteComments(by: profileID)
@@ -113,7 +154,20 @@ final class SessionViewModel: ObservableObject {
         pendingPostID = nil
     }
 
+    private func accountMediaURLs(for profileID: UUID) -> [URL] {
+        var urls = currentProfile?.profilePhotoURL.map { [$0] } ?? []
+        urls += postService.posts.filter { $0.userID == profileID }.flatMap(\.imageURLs)
+        urls += commentService.comments.filter { $0.userID == profileID }.flatMap(\.imageURLs)
+        urls += messageService.messages.filter { $0.senderID == profileID }.flatMap(\.imageURLs)
+        return urls
+    }
+
     func handleDeepLink(_ url: URL) {
+        if let recoveryToken = DeepLink.passwordRecoveryAccessToken(from: url) {
+            passwordRecoveryAccessToken = recoveryToken
+            errorMessage = nil
+            return
+        }
         if let postID = DeepLink.postID(from: url) {
             pendingPostID = postID
         }
@@ -184,6 +238,26 @@ final class SessionViewModel: ObservableObject {
     private func loadNotificationReadState() {
         guard let userID = currentProfile?.id else { return }
         notificationsReadAt = UserDefaults.standard.object(forKey: "notificationsReadAt.\(userID.uuidString)") as? Date ?? .distantPast
+    }
+}
+
+enum PasswordRecoveryError: LocalizedError {
+    case invalidEmail
+    case invalidCode
+    case weakPassword
+    case expiredLink
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidEmail:
+            "Enter a valid email address."
+        case .invalidCode:
+            "Enter the recovery code from your email."
+        case .weakPassword:
+            "Password must be at least 8 characters."
+        case .expiredLink:
+            "This recovery link is invalid or expired. Request a new email."
+        }
     }
 }
 

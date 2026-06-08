@@ -5,6 +5,9 @@ struct SettingsPrivacyView: View {
     @State private var profile = DemoData.currentUser
     @State private var showingDeleteAccount = false
     @State private var showingSignOut = false
+    @State private var isSaving = false
+    @State private var isDeleting = false
+    @State private var errorMessage: String?
 
     var body: some View {
         Form {
@@ -23,19 +26,47 @@ struct SettingsPrivacyView: View {
                 }
             }
             Section("Safety") {
-                Label("Street address, phone number, SSN, and private details are not displayed publicly.", systemImage: "lock.shield")
+                Label("Do not post street addresses, phone numbers, SSNs, or other private details.", systemImage: "lock.shield")
                 Label("Anonymous posting is available for job reviews.", systemImage: "person.fill.questionmark")
             }
-            Section {
-                Button("Save Privacy Settings") {
-                    Task { try? await session.updateCurrentProfile(profile) }
+            Section("Legal & Support") {
+                NavigationLink("Privacy Policy") {
+                    PrivacyPolicyView()
                 }
+                NavigationLink("Terms of Use") {
+                    TermsAgreementView()
+                        .padding()
+                        .navigationTitle("Terms of Use")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+                NavigationLink("Support") {
+                    SupportView()
+                }
+            }
+            if let errorMessage {
+                Section {
+                    ErrorView(message: errorMessage)
+                }
+            }
+            Section {
+                Button {
+                    savePrivacySettings()
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Text("Save Privacy Settings")
+                    }
+                }
+                .disabled(isSaving || isDeleting)
                 Button("Sign Out", role: .destructive) {
                     showingSignOut = true
                 }
+                .disabled(isSaving || isDeleting)
                 Button("Delete Account", role: .destructive) {
                     showingDeleteAccount = true
                 }
+                .disabled(isSaving || isDeleting)
             }
         }
         .navigationTitle("Privacy")
@@ -44,7 +75,7 @@ struct SettingsPrivacyView: View {
         .background(Color.crewCanvas)
         .confirmationDialog("Delete your account?", isPresented: $showingDeleteAccount, titleVisibility: .visible) {
             Button("Delete Account", role: .destructive) {
-                session.deleteCurrentAccount()
+                deleteAccount()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -60,6 +91,34 @@ struct SettingsPrivacyView: View {
         }
         .onAppear {
             profile = session.currentProfile ?? DemoData.currentUser
+        }
+    }
+
+    private func savePrivacySettings() {
+        guard !isSaving else { return }
+        errorMessage = nil
+        isSaving = true
+        Task {
+            do {
+                try await session.updateCurrentProfile(profile)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
+    }
+
+    private func deleteAccount() {
+        guard !isDeleting else { return }
+        errorMessage = nil
+        isDeleting = true
+        Task {
+            do {
+                try await session.deleteCurrentAccount()
+            } catch {
+                errorMessage = "Account deletion failed: \(error.localizedDescription)"
+                isDeleting = false
+            }
         }
     }
 }

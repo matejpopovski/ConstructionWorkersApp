@@ -19,6 +19,7 @@ struct MainTabView: View {
                 .tabItem { Label("Home", systemImage: "house") }
             MessagesView()
                 .tabItem { Label("Chat", systemImage: "message") }
+                .badge(unreadMessageCount)
             CreatePostView()
                 .tabItem { Label("Post", systemImage: "plus.square") }
             SearchView()
@@ -32,6 +33,20 @@ struct MainTabView: View {
                 CommentsView(post: post)
             }
         }
+        .task {
+            while !Task.isCancelled {
+                session.messageService.refresh(currentUserID: session.currentProfile?.id)
+                do {
+                    try await Task.sleep(for: .seconds(3))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private var unreadMessageCount: Int {
+        session.messageService.totalUnreadCount(currentUserID: session.currentProfile?.id)
     }
 
     private var pendingPostBinding: Binding<Post?> {

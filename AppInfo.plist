@@ -34,7 +34,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>CrewRate lets workers choose profile, post, and comment photos.</string>
+	<string>Construction Gossip lets you choose photos for your profile, job reviews, comments, and private messages.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

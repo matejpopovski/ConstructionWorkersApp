@@ -51,10 +51,11 @@ The app now uses Supabase for authentication, profiles, posts, comments, likes, 
    - `add_auth_profile_trigger.sql`
    - `grant_api_permissions.sql`
    - `add_post_custom_trade_position.sql`
+   - `app_store_readiness.sql`
 
 ## Privacy Notes
 
-- Street address is modeled as `street_address_private_only` and is never rendered in public profile UI.
+- The app does not request or store a street address, phone number, SSN, contacts, or precise location.
 - Pay, company, trade, city, and state are optional.
 - Anonymous posting is supported.
 - Work reports show a warning before posting.

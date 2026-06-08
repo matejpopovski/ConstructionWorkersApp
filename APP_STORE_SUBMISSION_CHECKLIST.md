@@ -42,4 +42,7 @@ Use this checklist before submitting Construction Gossip directly to App Review.
 - Hosted privacy policy URL.
 - Hosted support URL.
 - Hosted terms URL.
-- Final production backend and moderation operations before real public launch.
+- Apply `Supabase/app_store_readiness.sql`.
+- Test permanent account deletion with a disposable account.
+- Make message photo storage private or explicitly resolve the public-URL risk.
+- Assign a person to the moderation queue and monitor the support inbox.

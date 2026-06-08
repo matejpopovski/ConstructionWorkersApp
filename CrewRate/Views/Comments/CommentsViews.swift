@@ -118,7 +118,14 @@ struct CommentRowView: View {
                 }
                 Spacer()
                 Menu {
-                    Button("Report", systemImage: "flag") { showingReport = true }
+                    if comment.userID == session.currentProfile?.id {
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            guard let currentUserID = session.currentProfile?.id else { return }
+                            session.commentService.delete(comment, currentUserID: currentUserID)
+                        }
+                    } else {
+                        Button("Report", systemImage: "flag") { showingReport = true }
+                    }
                 } label: {
                     Image(systemName: "ellipsis")
                 }
@@ -215,6 +222,7 @@ struct ReplyRowView: View {
     @EnvironmentObject private var session: SessionViewModel
     let reply: Comment
     let parentUsername: String
+    @State private var showingReport = false
 
     var body: some View {
         HStack(alignment: .top) {
@@ -224,7 +232,7 @@ struct ReplyRowView: View {
                     Text(reply.authorUsername).font(.caption.bold())
                     Text("@\(parentUsername)").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                Button {
+                    Button {
                         withAnimation(CrewDesign.standardAnimation) {
                             session.likeService.toggleComment(reply, commentService: session.commentService)
                         }
@@ -233,12 +241,34 @@ struct ReplyRowView: View {
                             .foregroundStyle(session.likeService.isCommentLiked(liveReply) ? .red : Color.crewNavy)
                     }
                     .buttonStyle(.borderless)
+                    Menu {
+                        if reply.userID == session.currentProfile?.id {
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                guard let currentUserID = session.currentProfile?.id else { return }
+                                session.commentService.delete(reply, currentUserID: currentUserID)
+                            }
+                        } else {
+                            Button("Report", systemImage: "flag", role: .destructive) {
+                                showingReport = true
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
                 }
                 Text(reply.textContent ?? "@\(parentUsername)")
                     .font(.subheadline)
             }
         }
         .padding(.leading, 28)
+        .confirmationDialog("Report this reply", isPresented: $showingReport) {
+            Button("Harassment or hate speech", role: .destructive) {
+                session.moderationService.reportComment(reply, reporterID: session.currentProfile?.id, reason: "harassment")
+            }
+            Button("Private personal information", role: .destructive) {
+                session.moderationService.reportComment(reply, reporterID: session.currentProfile?.id, reason: "private_info")
+            }
+        }
     }
 
     private var liveReply: Comment {

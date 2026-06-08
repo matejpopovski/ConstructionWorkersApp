@@ -18,7 +18,9 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if session.isAuthenticated {
+            if session.passwordRecoveryAccessToken != nil {
+                ResetPasswordView()
+            } else if session.isAuthenticated {
                 if session.needsOnboarding {
                     OnboardingProfileView()
                 } else {
