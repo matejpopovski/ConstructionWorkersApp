@@ -9,7 +9,7 @@ struct HomeFeedView: View {
                 LazyVStack(spacing: CrewDesign.Spacing.sm) {
                     CrewSectionHeader(
                         title: "Your crew feed",
-                        subtitle: "Recent job reports and local worker activity"
+                        subtitle: "Recent job reviews and local worker activity"
                     )
                     .padding(.horizontal, CrewDesign.Spacing.xxs)
                     .padding(.bottom, CrewDesign.Spacing.xxs)
@@ -186,9 +186,12 @@ struct PostCardView: View {
                 List {
                     ForEach(session.friendService.friends) { friend in
                         Button {
-                            session.messageService.send(to: friend, from: session.currentProfile, body: "Shared a post with you", imageData: nil, sharedPostID: post.id)
-                            sentToFriendName = friend.username
-                            showingFriendShare = false
+                            Task {
+                                if await session.messageService.send(to: friend, from: session.currentProfile, body: "Shared a post with you", imageData: nil, sharedPostID: post.id) {
+                                    sentToFriendName = friend.username
+                                    showingFriendShare = false
+                                }
+                            }
                         } label: {
                             HStack(spacing: 12) {
                                 ProfileImageView(profile: friend)
@@ -196,13 +199,13 @@ struct PostCardView: View {
                                     Text(friend.username)
                                         .font(.headline)
                                         .foregroundStyle(.primary)
-                                    Text("Send this report")
+                                    Text("Send this review")
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Image(systemName: "paperplane.fill")
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(.black)
                                     .frame(width: 34, height: 34)
                                     .background(Color.crewNavy)
                                     .clipShape(Circle())
@@ -228,7 +231,7 @@ struct PostCardView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Color.crewNavy)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.black)
                     .clipShape(Capsule())
                     .padding(.top, 8)
                     .onAppear {
@@ -386,7 +389,7 @@ struct PostAttributeResultsView: View {
     var body: some View {
         List {
             if posts.isEmpty {
-                EmptyStateView(title: "No matching reports", systemImage: "doc.text.magnifyingglass")
+                EmptyStateView(title: "No matching reviews", systemImage: "doc.text.magnifyingglass")
             } else {
                 ForEach(posts) { post in
                     PostCardView(post: post)

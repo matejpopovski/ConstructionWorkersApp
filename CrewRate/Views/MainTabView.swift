@@ -26,7 +26,7 @@ struct MainTabView: View {
             PublicProfileView(profile: nil)
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
         }
-        .tint(.crewNavy)
+        .tint(.crewOrange)
         .sheet(item: pendingPostBinding) { post in
             NavigationStack {
                 CommentsView(post: post)

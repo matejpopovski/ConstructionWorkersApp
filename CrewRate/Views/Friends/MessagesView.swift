@@ -41,6 +41,16 @@ struct MessagesView: View {
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                     }
+                                    let unreadCount = session.messageService.unreadCount(currentUserID: session.currentProfile?.id, friendID: profile.id)
+                                    if unreadCount > 0 {
+                                        Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
+                                            .font(.caption2.bold())
+                                            .foregroundStyle(.black)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 4)
+                                            .background(Color.crewOrange)
+                                            .clipShape(Capsule())
+                                    }
                                     }
                                     .contentShape(Rectangle())
                                 }
@@ -113,9 +123,9 @@ struct MessagesView: View {
         let messages = session.messageService.thread(currentUserID: session.currentProfile?.id, friendID: profile.id)
         guard let last = messages.last else { return "Start a conversation" }
         if let sharedPostID = last.sharedPostID, let post = session.postService.posts.first(where: { $0.id == sharedPostID }) {
-            return "Shared post: \(post.companyOrEmployer ?? post.textContent ?? "Construction report")"
+            return "Shared review: \(post.companyOrEmployer ?? post.textContent ?? "Construction review")"
         }
-        if last.sharedPostID != nil { return "Shared post" }
+        if last.sharedPostID != nil { return "Shared review" }
         if !last.body.isEmpty { return last.body }
         return "Photo"
     }
@@ -270,7 +280,7 @@ struct ActivityView: View {
     private func notificationText(for post: Post) -> String {
         let author = post.userID == session.currentProfile?.id ? "You" : (post.isAnonymous ? "Anonymous Worker" : post.authorUsername)
         let company = post.companyOrEmployer ?? "a job"
-        return "\(author) posted a report about \(company)"
+        return "\(author) posted a review about \(company)"
     }
 }
 

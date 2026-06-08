@@ -154,14 +154,14 @@ final class SessionViewModel: ObservableObject {
             if let parentID = comment.parentCommentID, myCommentIDs.contains(parentID) {
                 items.append(SocialNotification(id: "reply-\(comment.id)", text: "\(actor.username) replied to your comment", systemImage: "arrowshape.turn.up.left.fill", createdAt: comment.createdAt, profileID: actor.id, postID: comment.postID))
             } else if myPostIDs.contains(comment.postID) {
-                items.append(SocialNotification(id: "comment-\(comment.id)", text: "\(actor.username) commented on your report", systemImage: "bubble.left.fill", createdAt: comment.createdAt, profileID: actor.id, postID: comment.postID))
+                items.append(SocialNotification(id: "comment-\(comment.id)", text: "\(actor.username) commented on your review", systemImage: "bubble.left.fill", createdAt: comment.createdAt, profileID: actor.id, postID: comment.postID))
             }
         }
 
         for like in likeService.likes where like.userId != currentUserID {
             guard let actor = profiles.first(where: { $0.id == like.userId }) else { continue }
             if let postID = like.postId, myPostIDs.contains(postID) {
-                items.append(SocialNotification(id: "like-\(like.id)", text: "\(actor.username) liked your report", systemImage: "heart.fill", createdAt: like.createdAt ?? .distantPast, profileID: actor.id, postID: postID))
+                items.append(SocialNotification(id: "like-\(like.id)", text: "\(actor.username) liked your review", systemImage: "heart.fill", createdAt: like.createdAt ?? .distantPast, profileID: actor.id, postID: postID))
             } else if let commentID = like.commentId, myCommentIDs.contains(commentID),
                       let comment = myComments.first(where: { $0.id == commentID }) {
                 let noun = comment.parentCommentID == nil ? "comment" : "reply"

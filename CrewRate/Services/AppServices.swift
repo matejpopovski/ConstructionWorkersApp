@@ -636,6 +636,8 @@ final class LikeService: ObservableObject {
 @MainActor
 final class MessageService: ObservableObject {
     @Published private(set) var errorMessage: String?
+    @Published private(set) var sendingProfileIDs: Set<UUID> = []
+    @Published private(set) var lastReadAtByProfileID: [UUID: Date] = [:]
     @Published var messages: [ChatMessage] {
         didSet { LocalStore.saveMessages(messages) }
     }
@@ -647,10 +649,13 @@ final class MessageService: ObservableObject {
     func refresh(currentUserID: UUID?) {
         guard let currentUserID else { return }
         Task {
-            guard let remoteMessages = try? await SupabaseClient.fetchMessages(currentUserID: currentUserID) else { return }
-            messages = (messages + remoteMessages)
+            guard let snapshot = try? await SupabaseClient.fetchMessages(currentUserID: currentUserID) else { return }
+            messages = (messages + snapshot.messages)
                 .uniquedByMessageID()
                 .sorted { $0.createdAt < $1.createdAt }
+            lastReadAtByProfileID.merge(snapshot.lastReadAtByProfileID) { local, remote in
+                max(local, remote)
+            }
         }
     }
 
@@ -665,24 +670,48 @@ final class MessageService: ObservableObject {
         thread(currentUserID: currentUserID, friendID: friendID).last
     }
 
-    func send(to receiver: Profile, from sender: Profile?, body: String, imageData: Data?, sharedPostID: UUID? = nil) {
-        guard let sender else { return }
+    func unreadCount(currentUserID: UUID?, friendID: UUID) -> Int {
+        guard let currentUserID else { return 0 }
+        let lastReadAt = lastReadAtByProfileID[friendID] ?? .distantPast
+        return thread(currentUserID: currentUserID, friendID: friendID)
+            .filter { $0.senderID == friendID && $0.createdAt > lastReadAt }
+            .count
+    }
+
+    func markRead(profileID: UUID) {
+        lastReadAtByProfileID[profileID] = .now
+        Task { try? await SupabaseClient.markConversationRead(with: profileID) }
+    }
+
+    func isSending(to profileID: UUID) -> Bool {
+        sendingProfileIDs.contains(profileID)
+    }
+
+    @discardableResult
+    func send(to receiver: Profile, from sender: Profile?, body: String, imageData: Data?, sharedPostID: UUID? = nil) async -> Bool {
+        guard let sender, !sendingProfileIDs.contains(receiver.id) else { return false }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || imageData != nil || sharedPostID != nil else { return }
+        guard !trimmed.isEmpty || imageData != nil || sharedPostID != nil else { return false }
         let pendingMessage = ChatMessage(id: UUID(), senderID: sender.id, receiverID: receiver.id, body: trimmed, imageData: imageData, sharedPostID: sharedPostID, createdAt: .now)
         messages.append(pendingMessage)
-        Task {
-            do {
-                let remoteMessage = try await SupabaseClient.sendMessage(pendingMessage)
-                messages.removeAll { $0.id == pendingMessage.id }
-                messages.append(remoteMessage)
-                refresh(currentUserID: sender.id)
-                errorMessage = nil
-            } catch {
-                messages.removeAll { $0.id == pendingMessage.id }
-                errorMessage = error.localizedDescription
-            }
+        sendingProfileIDs.insert(receiver.id)
+        defer { sendingProfileIDs.remove(receiver.id) }
+        do {
+            let remoteMessage = try await SupabaseClient.sendMessage(pendingMessage)
+            messages.removeAll { $0.id == pendingMessage.id }
+            messages.append(remoteMessage)
+            refresh(currentUserID: sender.id)
+            errorMessage = nil
+            return true
+        } catch {
+            messages.removeAll { $0.id == pendingMessage.id }
+            errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    func clearError() {
+        errorMessage = nil
     }
 
     func deleteMessages(involving userID: UUID) {

@@ -230,20 +230,36 @@ enum SupabaseClient {
         return rows.map(\.friendId).filter { $0 != currentUserID }
     }
 
-    static func fetchMessages(currentUserID: UUID) async throws -> [ChatMessage] {
-        let memberRows: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?user_id=eq.\(currentUserID.uuidString)&select=conversation_id,user_id", method: "GET", body: OptionalBody.none, authorized: true)
+    static func fetchMessages(currentUserID: UUID) async throws -> MessageSnapshot {
+        let memberRows: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?user_id=eq.\(currentUserID.uuidString)&select=conversation_id,user_id,last_read_at", method: "GET", body: OptionalBody.none, authorized: true)
         let conversationIDs = memberRows.map(\.conversationId)
-        guard !conversationIDs.isEmpty else { return [] }
+        guard !conversationIDs.isEmpty else { return MessageSnapshot(messages: [], lastReadAtByProfileID: [:]) }
 
         let conversationList = postgrestList(conversationIDs)
-        let allMembers: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?conversation_id=in.\(conversationList)&select=conversation_id,user_id", method: "GET", body: OptionalBody.none, authorized: true)
+        let allMembers: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?conversation_id=in.\(conversationList)&select=conversation_id,user_id,last_read_at", method: "GET", body: OptionalBody.none, authorized: true)
         let messages: [MessageRow] = try await request(path: "/rest/v1/messages?conversation_id=in.\(conversationList)&select=*&order=created_at.asc", method: "GET", body: OptionalBody.none, authorized: true)
-        return messages.map { row in
+        let mappedMessages = messages.map { row in
             let members = allMembers.filter { $0.conversationId == row.conversationId }.map(\.userId)
             let otherUserID = members.first { $0 != currentUserID } ?? currentUserID
             let receiverID = row.senderId == currentUserID ? otherUserID : currentUserID
             return row.chatMessage(receiverID: receiverID)
         }
+        var lastReadAtByProfileID: [UUID: Date] = [:]
+        for membership in memberRows {
+            let members = allMembers.filter { $0.conversationId == membership.conversationId }
+            let otherUserID = members.first { $0.userId != currentUserID }?.userId ?? currentUserID
+            lastReadAtByProfileID[otherUserID] = membership.lastReadAt ?? .distantPast
+        }
+        return MessageSnapshot(messages: mappedMessages, lastReadAtByProfileID: lastReadAtByProfileID)
+    }
+
+    static func markConversationRead(with profileID: UUID) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/rest/v1/rpc/mark_direct_conversation_read",
+            method: "POST",
+            body: DirectConversationRequest(otherUserID: profileID),
+            authorized: true
+        )
     }
 
     static func sendMessage(_ message: ChatMessage) async throws -> ChatMessage {
@@ -293,30 +309,14 @@ enum SupabaseClient {
     }
 
     private static func directConversationID(senderID: UUID, receiverID: UUID) async throws -> UUID {
-        if let rows: [ConversationIDRow] = try? await request(
+        let rows: [ConversationIDRow] = try await request(
             path: "/rest/v1/rpc/get_or_create_direct_conversation",
             method: "POST",
             body: DirectConversationRequest(otherUserID: receiverID),
             authorized: true
-        ), let conversationID = rows.first?.getOrCreateDirectConversation {
-            return conversationID
-        }
-
-        let userIDs = Array(Set([senderID, receiverID]))
-        let memberRows: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?user_id=in.\(postgrestList(userIDs))&select=conversation_id,user_id", method: "GET", body: OptionalBody.none, authorized: true)
-        let grouped = Dictionary(grouping: memberRows, by: \.conversationId)
-        if let existing = grouped.first(where: { _, members in
-            let memberIDs = Set(members.map(\.userId))
-            return userIDs.allSatisfy { memberIDs.contains($0) }
-        })?.key {
-            return existing
-        }
-
-        let conversations: [ConversationRow] = try await request(path: "/rest/v1/conversations", method: "POST", body: ConversationRow(id: UUID(), title: nil), authorized: true, prefer: "return=representation")
-        guard let conversationID = conversations.first?.id else { throw SupabaseError.invalidResponse }
-        let _: EmptyResponse = try await request(path: "/rest/v1/conversation_members", method: "POST", body: ConversationMemberInsertRow(conversationId: conversationID, userId: senderID), authorized: true)
-        if receiverID != senderID {
-            let _: EmptyResponse = try await request(path: "/rest/v1/conversation_members", method: "POST", body: ConversationMemberInsertRow(conversationId: conversationID, userId: receiverID), authorized: true)
+        )
+        guard let conversationID = rows.first?.getOrCreateDirectConversation else {
+            throw SupabaseError.requestFailed("Messaging setup is incomplete. Apply the latest Supabase chat migration.")
         }
         return conversationID
     }
@@ -706,9 +706,15 @@ private struct ConversationIDRow: Decodable {
     var getOrCreateDirectConversation: UUID
 }
 
+struct MessageSnapshot {
+    var messages: [ChatMessage]
+    var lastReadAtByProfileID: [UUID: Date]
+}
+
 private struct ConversationMemberRow: Decodable {
     var conversationId: UUID
     var userId: UUID
+    var lastReadAt: Date?
 }
 
 private struct ConversationMemberInsertRow: Encodable {

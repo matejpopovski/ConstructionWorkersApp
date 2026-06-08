@@ -188,6 +188,7 @@ create table public.conversation_members (
   id uuid primary key default gen_random_uuid(),
   conversation_id uuid not null references public.conversations(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
+  last_read_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   unique (conversation_id, user_id)
 );
@@ -251,6 +252,24 @@ alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 alter table public.messages enable row level security;
 
+create or replace function public.is_conversation_member(target_conversation_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.conversation_members
+    where conversation_id = target_conversation_id
+      and user_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.is_conversation_member(uuid) from public;
+grant execute on function public.is_conversation_member(uuid) to authenticated;
+
 create or replace function public.get_or_create_direct_conversation(other_user_id uuid)
 returns table (get_or_create_direct_conversation uuid)
 language plpgsql
@@ -263,6 +282,10 @@ declare
 begin
   if current_user_id is null then
     raise exception 'Authentication required';
+  end if;
+
+  if not exists (select 1 from public.profiles where id = other_user_id) then
+    raise exception 'Recipient profile does not exist';
   end if;
 
   select cm1.conversation_id
@@ -295,6 +318,41 @@ end;
 $$;
 
 grant execute on function public.get_or_create_direct_conversation(uuid) to authenticated;
+
+create or replace function public.mark_direct_conversation_read(other_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  target_conversation_id uuid;
+begin
+  if current_user_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select cm1.conversation_id
+  into target_conversation_id
+  from public.conversation_members cm1
+  join public.conversation_members cm2
+    on cm2.conversation_id = cm1.conversation_id
+  where cm1.user_id = current_user_id
+    and cm2.user_id = other_user_id
+  limit 1;
+
+  if target_conversation_id is not null then
+    update public.conversation_members
+    set last_read_at = now()
+    where conversation_id = target_conversation_id
+      and user_id = current_user_id;
+  end if;
+end;
+$$;
+
+revoke all on function public.mark_direct_conversation_read(uuid) from public;
+grant execute on function public.mark_direct_conversation_read(uuid) to authenticated;
 
 create policy "profiles are readable" on public.profiles for select using (true);
 create policy "users insert own profile" on public.profiles for insert with check (auth.uid() = id);
@@ -331,22 +389,17 @@ create policy "users create own blocks" on public.blocked_users for insert with 
 create policy "users delete own blocks" on public.blocked_users for delete using (auth.uid() = blocker_id);
 
 create policy "members view conversations" on public.conversations for select using (
-  exists (select 1 from public.conversation_members cm where cm.conversation_id = id and cm.user_id = auth.uid())
+  public.is_conversation_member(id)
 );
-create policy "authenticated users create conversations" on public.conversations for insert to authenticated with check (true);
 create policy "members view conversation members" on public.conversation_members for select using (
-  exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
-);
-create policy "members add conversation members" on public.conversation_members for insert with check (
-  auth.uid() = user_id
-  or exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
+  public.is_conversation_member(conversation_id)
 );
 create policy "members view messages" on public.messages for select using (
-  exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
+  public.is_conversation_member(conversation_id)
 );
 create policy "members send messages" on public.messages for insert with check (
   auth.uid() = sender_id
-  and exists (select 1 from public.conversation_members cm where cm.conversation_id = conversation_id and cm.user_id = auth.uid())
+  and public.is_conversation_member(conversation_id)
 );
 
 insert into storage.buckets (id, name, public)

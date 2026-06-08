@@ -348,7 +348,7 @@ struct FilterChip: View {
                 .padding(.horizontal, CrewDesign.Spacing.md)
                 .frame(height: CrewDesign.Size.compactControlHeight)
                 .background(isSelected ? Color.crewNavy : Color.crewGray)
-                .foregroundStyle(isSelected ? .white : .primary)
+                .foregroundStyle(isSelected ? .black : Color.crewOrange)
                 .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))
         }
         .buttonStyle(CrewPressButtonStyle())
@@ -365,7 +365,7 @@ struct BadgeView: View {
             .lineLimit(1)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color.crewGray)
+            .background(Color.crewOrange.opacity(0.11))
             .foregroundStyle(Color.crewInk)
             .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))
     }
@@ -421,15 +421,15 @@ private struct AnyCrewButtonStyle: ButtonStyle {
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: CrewDesign.Size.compactControlHeight)
                     .padding(.horizontal, CrewDesign.Spacing.sm)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.black)
                     .background(Color.crewNavy.opacity(configuration.isPressed ? 0.78 : 1))
             case .secondary:
                 configuration.label
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: CrewDesign.Size.compactControlHeight)
                     .padding(.horizontal, CrewDesign.Spacing.sm)
-                    .foregroundStyle(.primary)
-                    .background(Color.crewGray.opacity(configuration.isPressed ? 0.65 : 1))
+                    .foregroundStyle(Color.crewOrange)
+                    .background(Color.crewOrange.opacity(configuration.isPressed ? 0.22 : 0.12))
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))

@@ -5,7 +5,7 @@ struct SearchView: View {
     @State private var query = ""
     @State private var selectedFilter = "All"
 
-    private let filters = ["All", "Workers", "Job Reports", "Companies", "Open to Work", "Union"]
+    private let filters = ["All", "Workers", "Job Reviews", "Companies", "Open to Work", "Union"]
 
     var body: some View {
         NavigationStack {
@@ -42,8 +42,8 @@ struct SearchView: View {
                         }
                     }
                 }
-                if shouldShow("Job Reports") {
-                    Section("Job Reports") {
+                if shouldShow("Job Reviews") {
+                    Section("Job Reviews") {
                         ForEach(visiblePosts) { post in
                             PostCardView(post: post)
                                 .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
@@ -65,7 +65,7 @@ struct SearchView: View {
                     EmptyStateView(title: "No matches", systemImage: "magnifyingglass")
                 }
             }
-            .searchable(text: $query, prompt: "Workers, reports, city, company, job, pay")
+            .searchable(text: $query, prompt: "Workers, reviews, city, company, job, pay")
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .listStyle(.plain)

@@ -1,7 +1,8 @@
 import SwiftUI
 
 extension Color {
-    static let crewNavy = Color.black
+    // Retained as an alias so existing components adopt the brand accent together.
+    static let crewNavy = Color(red: 1.0, green: 106.0 / 255.0, blue: 0.0)
     static let crewOrange = Color(red: 1.0, green: 106.0 / 255.0, blue: 0.0)
     static let crewGray = Color(red: 0.95, green: 0.96, blue: 0.97)
     static let crewInk = Color(red: 0.13, green: 0.15, blue: 0.18)
@@ -76,7 +77,7 @@ struct CrewPrimaryButtonStyle: ButtonStyle {
             .font(.headline)
             .frame(maxWidth: .infinity, minHeight: CrewDesign.Size.controlHeight)
             .padding(.horizontal, CrewDesign.Spacing.md)
-            .foregroundStyle(.white)
+            .foregroundStyle(.black)
             .background(Color.crewNavy.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.medium, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
@@ -90,8 +91,8 @@ struct CrewSecondaryButtonStyle: ButtonStyle {
             .font(.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity, minHeight: CrewDesign.Size.compactControlHeight)
             .padding(.horizontal, CrewDesign.Spacing.sm)
-            .foregroundStyle(.primary)
-            .background(Color.crewGray.opacity(configuration.isPressed ? 0.65 : 1))
+            .foregroundStyle(Color.crewOrange)
+            .background(Color.crewOrange.opacity(configuration.isPressed ? 0.22 : 0.12))
             .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.small, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(CrewDesign.standardAnimation, value: configuration.isPressed)
@@ -103,6 +104,7 @@ struct CrewIconButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 17, weight: .semibold))
             .frame(width: CrewDesign.Size.iconButton, height: CrewDesign.Size.iconButton)
+            .foregroundStyle(Color.crewOrange)
             .contentShape(Rectangle())
             .scaleEffect(configuration.isPressed ? 0.88 : 1)
             .opacity(configuration.isPressed ? 0.65 : 1)

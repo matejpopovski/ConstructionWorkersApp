@@ -24,8 +24,8 @@ struct PublicProfileView: View {
                     actionButtons
                     details
                     CrewSectionHeader(
-                        title: "Job reports",
-                        subtitle: isCurrentUser ? "Your public and anonymous activity" : "Reports shared by \(shownProfile.username)"
+                        title: "Job reviews",
+                        subtitle: isCurrentUser ? "Your public and anonymous activity" : "Reviews shared by \(shownProfile.username)"
                     )
                     if visibleProfilePosts.isEmpty {
                         EmptyStateView(title: "No public posts yet", systemImage: "doc.text")
@@ -76,7 +76,7 @@ struct PublicProfileView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Their reports will no longer be prioritized in your crew feed.")
+                Text("Their reviews will no longer be prioritized in your crew feed.")
             }
         }
     }
@@ -113,7 +113,7 @@ struct PublicProfileView: View {
 
     private var socialStats: some View {
         HStack(spacing: 0) {
-            statBlock(count: visibleProfilePosts.count, label: "Reports")
+            statBlock(count: visibleProfilePosts.count, label: "Reviews")
             Divider().frame(height: 32)
             NavigationLink {
                 SocialConnectionsView(profile: shownProfile, title: "Followers")
@@ -407,7 +407,7 @@ struct EditProfileView: View {
                         Spacer()
                         if isSaving {
                             ProgressView()
-                                .tint(.white)
+                                .tint(.black)
                         }
                         Text(isSaving ? "Saving..." : "Save Changes")
                         Spacer()
@@ -477,30 +477,35 @@ struct ChatView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var selectedPhotoData: Data?
     @State private var photoErrorMessage: String?
+    @State private var isSending = false
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    let messages = session.messageService.thread(currentUserID: session.currentProfile?.id, friendID: profile.id)
-                    let visibleMessages = messages.filter {
-                        $0.senderID == session.currentProfile?.id || !session.moderationService.isBlocked($0.senderID)
-                    }
-                    if visibleMessages.isEmpty {
-                        ContentUnavailableView("No messages yet", systemImage: "message", description: Text("Start a conversation with \(profile.username)."))
-                            .padding(.top, 80)
-                    } else {
-                        ForEach(visibleMessages) { message in
-                            ChatBubble(message: message, isMine: message.senderID == session.currentProfile?.id)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if visibleMessages.isEmpty {
+                            ContentUnavailableView("No messages yet", systemImage: "message", description: Text("Start a conversation with \(profile.username)."))
+                                .padding(.top, 80)
+                        } else {
+                            ForEach(visibleMessages) { message in
+                                ChatBubble(message: message, isMine: message.senderID == session.currentProfile?.id)
+                                    .id(message.id)
+                            }
                         }
                     }
+                    .padding(CrewDesign.Spacing.md)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(CrewDesign.Spacing.md)
-                .frame(maxWidth: .infinity)
-            }
-            .background(Color.crewCanvas)
-            .refreshable {
-                session.refreshRemoteData()
+                .background(Color.crewCanvas)
+                .refreshable {
+                    session.refreshRemoteData()
+                }
+                .onAppear { scrollToLatest(using: proxy, animated: false) }
+                .onChange(of: visibleMessages.last?.id) { _, _ in
+                    session.messageService.markRead(profileID: profile.id)
+                    scrollToLatest(using: proxy, animated: true)
+                }
             }
             if let selectedPhotoData, let image = UIImage(data: selectedPhotoData) {
                 HStack {
@@ -539,19 +544,22 @@ struct ChatView: View {
                     .background(Color.crewGray)
                     .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.large, style: .continuous))
                 Button {
-                    session.messageService.send(to: profile, from: session.currentProfile, body: draft, imageData: selectedPhotoData)
-                    draft = ""
-                    selectedPhoto = nil
-                    selectedPhotoData = nil
+                    sendMessage()
                 } label: {
-                    Image(systemName: "paperplane.fill")
-                        .frame(width: CrewDesign.Size.iconButton, height: CrewDesign.Size.iconButton)
+                    Group {
+                        if isSending {
+                            ProgressView().tint(.black)
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                        }
+                    }
+                    .frame(width: CrewDesign.Size.iconButton, height: CrewDesign.Size.iconButton)
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(.black)
                 .background(Color.crewNavy)
                 .clipShape(Circle())
                 .buttonStyle(CrewPressButtonStyle())
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedPhotoData == nil)
+                .disabled(isSending || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedPhotoData == nil))
             }
             .padding(.horizontal, CrewDesign.Spacing.sm)
             .padding(.vertical, CrewDesign.Spacing.xs)
@@ -560,7 +568,9 @@ struct ChatView: View {
         .navigationTitle(profile.username)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            session.messageService.clearError()
             session.messageService.refresh(currentUserID: session.currentProfile?.id)
+            session.messageService.markRead(profileID: profile.id)
         }
         .task {
             while !Task.isCancelled {
@@ -570,6 +580,44 @@ struct ChatView: View {
         }
         .onChange(of: selectedPhoto) { _, newItem in
             Task { await loadSelectedPhoto(newItem) }
+        }
+    }
+
+    private var visibleMessages: [ChatMessage] {
+        session.messageService
+            .thread(currentUserID: session.currentProfile?.id, friendID: profile.id)
+            .filter { $0.senderID == session.currentProfile?.id || !session.moderationService.isBlocked($0.senderID) }
+    }
+
+    private func sendMessage() {
+        guard !isSending else { return }
+        let outgoingDraft = draft
+        let outgoingPhoto = selectedPhotoData
+        isSending = true
+        Task {
+            let sent = await session.messageService.send(
+                to: profile,
+                from: session.currentProfile,
+                body: outgoingDraft,
+                imageData: outgoingPhoto
+            )
+            isSending = false
+            if sent {
+                draft = ""
+                selectedPhoto = nil
+                selectedPhotoData = nil
+                session.messageService.markRead(profileID: profile.id)
+            }
+        }
+    }
+
+    private func scrollToLatest(using proxy: ScrollViewProxy, animated: Bool) {
+        guard let messageID = visibleMessages.last?.id else { return }
+        let action = { proxy.scrollTo(messageID, anchor: .bottom) }
+        if animated {
+            withAnimation(CrewDesign.standardAnimation, action)
+        } else {
+            action()
         }
     }
 
@@ -639,13 +687,13 @@ struct ChatBubble: View {
                 TimelineView(.periodic(from: .now, by: 30)) { _ in
                     Text(DateDisplay.label(for: message.createdAt))
                         .font(.caption2)
-                        .foregroundStyle(isMine ? .white.opacity(0.75) : .secondary)
+                        .foregroundStyle(isMine ? .black.opacity(0.68) : .secondary)
                 }
             }
             .padding(.horizontal, CrewDesign.Spacing.sm)
             .padding(.vertical, 10)
             .background(isMine ? Color.crewNavy : Color.crewSurface)
-            .foregroundStyle(isMine ? .white : .primary)
+            .foregroundStyle(isMine ? .black : .primary)
             .clipShape(RoundedRectangle(cornerRadius: CrewDesign.Radius.large, style: .continuous))
             .overlay {
                 if !isMine {
@@ -666,7 +714,7 @@ struct SharedPostPreview: View {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text.fill")
                     .foregroundStyle(Color.crewOrange)
-                Text("Shared Post")
+                Text("Shared Review")
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 Spacer()

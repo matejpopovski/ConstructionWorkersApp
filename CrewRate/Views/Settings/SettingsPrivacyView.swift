@@ -24,7 +24,7 @@ struct SettingsPrivacyView: View {
             }
             Section("Safety") {
                 Label("Street address, phone number, SSN, and private details are not displayed publicly.", systemImage: "lock.shield")
-                Label("Anonymous posting is available for work reports and general posts.", systemImage: "person.fill.questionmark")
+                Label("Anonymous posting is available for job reviews.", systemImage: "person.fill.questionmark")
             }
             Section {
                 Button("Save Privacy Settings") {
