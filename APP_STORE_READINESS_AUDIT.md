@@ -19,7 +19,7 @@ Audit date: June 8, 2026
 - The privacy policy described account deletion as incomplete and documented collection of a street address.
 - Photo permission copy used the old CrewRate name and omitted message photos.
 - No production moderation console exists. Reports are stored in Supabase and require a documented human review process.
-- Message photos are stored in a public bucket. The app UI limits message access, but anyone with a valid object URL may retrieve the image.
+- Message photos now use a private bucket, conversation-member policies, and temporary signed URLs.
 - Many background refresh/mutation operations still suppress network errors and rely on local optimistic state.
 - Feed, search, comments, and messages are not paginated, creating scale and memory risk.
 - There are no automated UI/integration tests for authentication, uploads, messaging, moderation, or deletion.
@@ -27,9 +27,9 @@ Audit date: June 8, 2026
 ### Submission Configuration
 
 - Xcode signing team is blank.
-- Bundle identifier is still `com.matejpopovski.CrewRate`; confirm this is the final registered identifier.
+- Final bundle identifier is `com.matejpopovski.ConstructionGossip`; register this exact identifier in Apple Developer.
 - Version/build are still `1.0 (1)`.
-- Public Privacy, Terms, and Support web URLs do not yet exist.
+- Public Privacy, Terms, and Support pages are hosted through GitHub Pages.
 - Demo reviewer credentials are not yet entered in App Store Connect.
 
 ## B. Changes Made
@@ -52,15 +52,14 @@ Audit date: June 8, 2026
 ## C. Remaining Rejection Risks
 
 1. Apply `Supabase/app_store_readiness.sql` and test deletion with a disposable account. Until applied, Delete Account will fail.
-2. Make `message-images` private and deliver signed/authenticated URLs before public launch. This requires a coordinated data migration because existing message rows store public URLs.
+2. Monitor private message-image delivery after release; the private bucket migration and two-account simulator test now pass.
 3. Assign and operate a moderation queue. Apple Guideline 1.2 expects timely action, not only report buttons.
 4. Add content filtering/rate limits for spam, threats, explicit content, harassment, and private information.
 5. Improve network failure presentation for posting, deleting, following, liking, reporting, blocking, and refreshing.
 6. Perform device testing on small/large iPhones, light/dark mode, Dynamic Type, VoiceOver, slow network, and offline mode.
 7. Create pre-confirmed review accounts. Email confirmation is enabled, so Apple should not be asked to create or verify an account.
-8. Host legal/support pages on stable HTTPS URLs matching the in-app text.
-9. Validate the support email is owned and monitored.
-10. Archive a signed Release build and resolve any Organizer validation warnings.
+8. Monitor the public support request channel and Supabase moderation queue.
+9. Archive a signed Release build and resolve any Organizer validation warnings.
 
 ## Privacy Label Inventory
 
@@ -122,4 +121,6 @@ Suggested review path:
 8. Open the notification bell for follow requests, likes, comments, and replies.
 9. Open Profile > Settings for privacy controls, Privacy Policy, Terms, Support, Sign Out, and permanent Delete Account.
 
-Anonymous reviews hide the author from other users but retain the account association for moderation. User reports are written to the Supabase moderation queue. The support contact is `support@constructiongossip.app`.
+Anonymous reviews hide the author from other users but retain the account association for moderation. User reports are written to the Supabase moderation queue.
+
+Support: https://matejpopovski.github.io/ConstructionWorkersApp/support.html
