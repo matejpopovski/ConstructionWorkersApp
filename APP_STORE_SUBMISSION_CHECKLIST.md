@@ -39,10 +39,6 @@ Use this checklist before submitting Construction Gossip directly to App Review.
 
 - Paid Apple Developer Program enrollment.
 - App Store Connect app record.
-- Hosted privacy policy URL.
-- Hosted support URL.
-- Hosted terms URL.
-- Apply `Supabase/app_store_readiness.sql`.
-- Test permanent account deletion with a disposable account.
-- Make message photo storage private or explicitly resolve the public-URL risk.
+- Assign a person to monitor support requests and the moderation queue.
+- Confirm the final hosted legal URLs load before submission.
 - Assign a person to the moderation queue and monitor the support inbox.

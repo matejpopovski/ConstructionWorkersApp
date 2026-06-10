@@ -43,7 +43,7 @@ private enum TermsOfUse {
     static let sections: [TermsSection] = [
         TermsSection(
             title: "Effective Date: June 2, 2026",
-            body: "App Name: Construction Gossip. Company/Developer: Construction Gossip. Contact: support@constructiongossip.app."
+            body: "App Name: Construction Gossip. Company/Developer: Construction Gossip. Support: matejpopovski.github.io/ConstructionWorkersApp/support.html."
         ),
         TermsSection(
             title: "Welcome",
@@ -119,7 +119,7 @@ private enum TermsOfUse {
         ),
         TermsSection(
             title: "18. Governing Law and Disputes",
-            body: "These Terms are governed by applicable United States law and the laws of the jurisdiction where Construction Gossip is operated, without regard to conflict-of-law principles. Before filing a claim, you agree to contact support@constructiongossip.app and try to resolve the dispute informally."
+            body: "These Terms are governed by applicable United States law and the laws of the jurisdiction where Construction Gossip is operated, without regard to conflict-of-law principles. Before filing a claim, you agree to use the Construction Gossip support page and try to resolve the dispute informally."
         ),
         TermsSection(
             title: "19. App Store Terms",
@@ -127,7 +127,7 @@ private enum TermsOfUse {
         ),
         TermsSection(
             title: "20. Copyright Complaints",
-            body: "If you believe content on the Service infringes your copyright, contact support@constructiongossip.app with your name and contact information, a description of the copyrighted work, a description of the allegedly infringing content, a good-faith statement, an accuracy statement, and your physical or electronic signature."
+            body: "If you believe content on the Service infringes your copyright, use the Construction Gossip support page and provide your name and contact information, a description of the copyrighted work, a description of the allegedly infringing content, a good-faith statement, an accuracy statement, and your physical or electronic signature."
         )
     ]
 }

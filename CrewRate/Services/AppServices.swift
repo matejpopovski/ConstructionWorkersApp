@@ -660,7 +660,7 @@ final class MessageService: ObservableObject {
             defer { isRefreshing = false }
             do {
                 let snapshot = try await SupabaseClient.fetchMessages(currentUserID: currentUserID)
-                messages = (messages + snapshot.messages)
+                messages = (snapshot.messages + messages)
                     .uniquedByMessageID()
                     .sorted { $0.createdAt < $1.createdAt }
                 lastReadAtByProfileID.merge(snapshot.lastReadAtByProfileID) { local, remote in

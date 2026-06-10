@@ -1,0 +1,7 @@
+title: Construction Gossip
+description: Privacy, terms, and support information for Construction Gossip.
+theme: minima
+header_pages:
+  - privacy.md
+  - terms.md
+  - support.md

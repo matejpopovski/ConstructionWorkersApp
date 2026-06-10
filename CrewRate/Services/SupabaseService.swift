@@ -90,8 +90,33 @@ private actor SupabaseTokenRefreshCoordinator {
     }
 }
 
+private actor SignedStorageURLCache {
+    static let shared = SignedStorageURLCache()
+
+    private struct Entry {
+        let url: URL
+        let expiresAt: Date
+    }
+
+    private var entries: [String: Entry] = [:]
+
+    func url(for key: String) -> URL? {
+        guard let entry = entries[key],
+              entry.expiresAt.timeIntervalSinceNow > 300 else {
+            entries[key] = nil
+            return nil
+        }
+        return entry.url
+    }
+
+    func store(_ url: URL, for key: String, lifetime: TimeInterval) {
+        entries[key] = Entry(url: url, expiresAt: .now.addingTimeInterval(lifetime))
+    }
+}
+
 enum SupabaseClient {
     private static let session = URLSession.shared
+    private static let signedStorageURLLifetime = 3600
 
     static func signUp(username: String, email: String, password: String) async throws -> Profile {
         let payload = AuthRequest(email: email, password: password, data: ["username": username])
@@ -299,11 +324,14 @@ enum SupabaseClient {
         let conversationList = postgrestList(conversationIDs)
         let allMembers: [ConversationMemberRow] = try await request(path: "/rest/v1/conversation_members?conversation_id=in.\(conversationList)&select=conversation_id,user_id,last_read_at", method: "GET", body: OptionalBody.none, authorized: true)
         let messages: [MessageRow] = try await request(path: "/rest/v1/messages?conversation_id=in.\(conversationList)&select=*&order=created_at.asc", method: "GET", body: OptionalBody.none, authorized: true)
-        let mappedMessages = messages.map { row in
+        var mappedMessages: [ChatMessage] = []
+        for row in messages {
             let members = allMembers.filter { $0.conversationId == row.conversationId }.map(\.userId)
             let otherUserID = members.first { $0 != currentUserID } ?? currentUserID
             let receiverID = row.senderId == currentUserID ? otherUserID : currentUserID
-            return row.chatMessage(receiverID: receiverID)
+            var message = row.chatMessage(receiverID: receiverID)
+            message.imageURLs = try await signedMessageImageURLs(row.imageUrls)
+            mappedMessages.append(message)
         }
         var lastReadAtByProfileID: [UUID: Date] = [:]
         for membership in memberRows {
@@ -327,11 +355,18 @@ enum SupabaseClient {
         let conversationID = try await directConversationID(senderID: message.senderID, receiverID: message.receiverID)
         var row = MessageRow(message: message, conversationID: conversationID)
         if let imageData = message.imageData {
-            row.imageUrls = try await uploadImages([imageData], bucket: "message-images", prefix: "messages/\(message.id.uuidString)")
+            row.imageUrls = try await uploadImages(
+                [imageData],
+                bucket: "message-images",
+                prefix: "conversations/\(conversationID.uuidString)/\(message.id.uuidString)",
+                isPublic: false
+            )
         }
         let rows: [MessageRow] = try await request(path: "/rest/v1/messages", method: "POST", body: row, authorized: true, prefer: "return=representation")
         guard let created = rows.first else { throw SupabaseError.invalidResponse }
-        return created.chatMessage(receiverID: message.receiverID)
+        var createdMessage = created.chatMessage(receiverID: message.receiverID)
+        createdMessage.imageURLs = try await signedMessageImageURLs(created.imageUrls)
+        return createdMessage
     }
 
     static func report(_ report: Report) async throws {
@@ -365,9 +400,8 @@ enum SupabaseClient {
 
     static func deleteOwnedMedia(urls: [URL]) async throws {
         for url in Set(urls) {
-            let marker = "/storage/v1/object/public/"
-            guard let range = url.path.range(of: marker) else { continue }
-            let objectPath = String(url.path[range.upperBound...])
+            guard let object = storageObject(from: url) else { continue }
+            let objectPath = "\(object.bucket)/\(object.path)"
             let encodedPath = objectPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? objectPath
             let _: EmptyResponse = try await request(
                 path: "/storage/v1/object/\(encodedPath)",
@@ -378,7 +412,7 @@ enum SupabaseClient {
         }
     }
 
-    private static func uploadImages(_ images: [Data], bucket: String, prefix: String) async throws -> [URL] {
+    private static func uploadImages(_ images: [Data], bucket: String, prefix: String, isPublic: Bool = true) async throws -> [URL] {
         var urls: [URL] = []
         for (index, data) in images.enumerated() {
             let path = "\(prefix)-\(index).jpg"
@@ -393,9 +427,80 @@ enum SupabaseClient {
                 prefer: "return=minimal",
                 upsertStorageObject: true
             )
-            urls.append(SupabaseConfig.projectURL.appending(path: "/storage/v1/object/public/\(bucket)/\(path)"))
+            if isPublic {
+                urls.append(SupabaseConfig.projectURL.appending(path: "/storage/v1/object/public/\(bucket)/\(path)"))
+            } else if let reference = URL(string: "supabase-storage://\(bucket)/\(path)") {
+                urls.append(reference)
+            } else {
+                throw SupabaseError.invalidResponse
+            }
         }
         return urls
+    }
+
+    private static func signedMessageImageURLs(_ references: [URL]) async throws -> [URL] {
+        var urls: [URL] = []
+        for reference in references {
+            guard let object = storageObject(from: reference),
+                  object.bucket == "message-images" else {
+                urls.append(reference)
+                continue
+            }
+
+            let cacheKey = "\(object.bucket)/\(object.path)"
+            if let cachedURL = await SignedStorageURLCache.shared.url(for: cacheKey) {
+                urls.append(cachedURL)
+                continue
+            }
+
+            let encodedPath = object.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? object.path
+            let response: SignedStorageURLResponse = try await request(
+                path: "/storage/v1/object/sign/\(object.bucket)/\(encodedPath)",
+                method: "POST",
+                rawBody: try JSONSerialization.data(
+                    withJSONObject: ["expiresIn": signedStorageURLLifetime]
+                ),
+                contentType: "application/json",
+                authorized: true
+            )
+            guard let signedURL = resolvedSignedStorageURL(response.signedURL) else {
+                throw SupabaseError.invalidResponse
+            }
+            await SignedStorageURLCache.shared.store(
+                signedURL,
+                for: cacheKey,
+                lifetime: TimeInterval(signedStorageURLLifetime)
+            )
+            urls.append(signedURL)
+        }
+        return urls
+    }
+
+    private static func storageObject(from url: URL) -> (bucket: String, path: String)? {
+        if url.scheme == "supabase-storage",
+           let bucket = url.host,
+           !bucket.isEmpty {
+            return (bucket, String(url.path.drop(while: { $0 == "/" })))
+        }
+
+        for marker in ["/storage/v1/object/public/", "/storage/v1/object/sign/"] {
+            guard let range = url.path.range(of: marker) else { continue }
+            let objectPath = String(url.path[range.upperBound...])
+            let components = objectPath.split(separator: "/", maxSplits: 1).map(String.init)
+            guard components.count == 2 else { return nil }
+            return (components[0], components[1])
+        }
+        return nil
+    }
+
+    private static func resolvedSignedStorageURL(_ value: String) -> URL? {
+        if let absoluteURL = URL(string: value), absoluteURL.scheme != nil {
+            return absoluteURL
+        }
+        let path = value.hasPrefix("/storage/v1/")
+            ? value
+            : "/storage/v1\(value.hasPrefix("/") ? value : "/\(value)")"
+        return URL(string: path, relativeTo: SupabaseConfig.projectURL)?.absoluteURL
     }
 
     private static func directConversationID(senderID: UUID, receiverID: UUID) async throws -> UUID {
@@ -607,6 +712,14 @@ private struct PasswordRecoveryVerificationRequest: Encodable {
 
 private struct PasswordUpdateRequest: Encodable {
     let password: String
+}
+
+private struct SignedStorageURLResponse: Decodable {
+    let signedURL: String
+
+    private enum CodingKeys: String, CodingKey {
+        case signedURL
+    }
 }
 
 private struct AuthUserResponse: Decodable {

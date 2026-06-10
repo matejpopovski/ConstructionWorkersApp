@@ -30,7 +30,7 @@ struct PrivacyPolicyView: View {
                 )
                 policySection(
                     "Contact",
-                    "For privacy questions or deletion support, email support@constructiongossip.app."
+                    "For privacy questions or deletion support, visit matejpopovski.github.io/ConstructionWorkersApp/support.html."
                 )
             }
             .padding()
@@ -55,8 +55,8 @@ struct SupportView: View {
     var body: some View {
         List {
             Section("Contact") {
-                Link(destination: URL(string: "mailto:support@constructiongossip.app")!) {
-                    Label("support@constructiongossip.app", systemImage: "envelope")
+                Link(destination: URL(string: "https://matejpopovski.github.io/ConstructionWorkersApp/support.html")!) {
+                    Label("Open Support Page", systemImage: "safari")
                 }
             }
             Section("Safety") {

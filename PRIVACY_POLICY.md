@@ -1,6 +1,6 @@
-# Privacy Policy Draft
+# Privacy Policy
 
-Effective date: June 4, 2026
+Effective date: June 10, 2026
 
 Construction Gossip is a mobile app for construction workers to share workplace experiences, employer reviews, pay context, safety notes, comments, messages, and profile information.
 
@@ -40,4 +40,5 @@ Reasonable technical and organizational measures should be used to protect user 
 
 ## Contact
 
-For privacy questions or deletion support, contact support@constructiongossip.app.
+For privacy questions or deletion support, visit:
+https://matejpopovski.github.io/ConstructionWorkersApp/support.html

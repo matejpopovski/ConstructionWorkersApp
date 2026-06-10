@@ -1,6 +1,7 @@
 # Construction Gossip Support
 
-For support, contact support@constructiongossip.app.
+For support, visit:
+https://matejpopovski.github.io/ConstructionWorkersApp/support.html
 
 Include:
 
